@@ -139,8 +139,8 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 25 {
-		t.Fatalf("expected twenty-five recorded migrations, got %d", count)
+	if count != 26 {
+		t.Fatalf("expected twenty-six recorded migrations, got %d", count)
 	}
 }
 
@@ -961,7 +961,7 @@ func TestManualQueuedMessageClaimsBeforeScheduledOccurrence(t *testing.T) {
 	}
 }
 
-func TestListSessionsReturnsMostRecentlyUpdatedFirst(t *testing.T) {
+func TestListSessionsReturnsMostRecentActivityFirst(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t, ctx)
 
@@ -977,11 +977,15 @@ func TestListSessionsReturnsMostRecentlyUpdatedFirst(t *testing.T) {
 	store.now = func() time.Time { return thirdAt }
 	third := createTestSessionWithTitle(t, ctx, store, "Third")
 	store.now = func() time.Time { return updatedAt }
-	if _, err := store.UpdateSessionStatus(ctx, UpdateSessionStatusParams{
-		ID:     first.ID,
-		Status: SessionStatusRunning,
+	if _, err := store.AppendEvent(ctx, AppendEventParams{
+		SessionID: first.ID, Type: "user.message.completed", Role: "user",
+		Status: EventStatusCompleted, Payload: json.RawMessage(`{"text":"New work"}`),
 	}); err != nil {
-		t.Fatalf("update first session: %v", err)
+		t.Fatalf("append first session activity: %v", err)
+	}
+	store.now = func() time.Time { return updatedAt.Add(time.Minute) }
+	if _, err := store.UpdateSessionTitle(ctx, UpdateSessionTitleParams{ID: second.ID, Title: "Renamed"}); err != nil {
+		t.Fatal(err)
 	}
 
 	sessions, err := store.ListSessions(ctx, ListSessionsParams{})

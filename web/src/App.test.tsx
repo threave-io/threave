@@ -2021,6 +2021,32 @@ test('global activity stream marks another session pending input', async () => {
   await waitFor(() => expect(faviconPath()).toBe('/favicon-notify.svg'))
 })
 
+test('real streamed activity reorders sessions while clicking and metadata refreshes do not', async () => {
+  const user = userEvent.setup()
+  const fetch = fetchMock({ sessions: [firstSession, { ...secondSession, updated_at: '2026-06-12T19:00:00Z' }] })
+  vi.stubGlobal('fetch', fetch)
+  render(<App />)
+
+  const source = await findEventSource('/api/sessions/activity/stream')
+  const rowIDs = () => Array.from(
+    document.querySelector('.session-list-rows')!.querySelectorAll('[data-session-id]'),
+    (row) => row.getAttribute('data-session-id'),
+  )
+  await waitFor(() => expect(rowIDs()).toEqual(['sess_1', 'sess_2']))
+  act(() => {
+    source.emit({ ...event(1, 'agent.message.delta', { text: 'Working' }, 'sess_2'), created_at: '2026-06-12T16:03:00Z', transient: true })
+  })
+  await waitFor(() => expect(rowIDs()).toEqual(['sess_2', 'sess_1']))
+
+  // Opening the active session fetches an older durable snapshot; keep its streamed activity.
+  await user.click(screen.getByRole('button', { name: secondSession.title }))
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/sessions/sess_2/notification-attention/clear', expect.anything()))
+  expect(rowIDs()).toEqual(['sess_2', 'sess_1'])
+  await user.click(screen.getByRole('button', { name: firstSession.title }))
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/sessions/sess_1/notification-attention/clear', expect.anything()))
+  expect(rowIDs()).toEqual(['sess_2', 'sess_1'])
+})
+
 test('session settings events update the cached session snapshot', () => {
   const updated = applySessionEvent(
     firstSession,
@@ -3115,6 +3141,7 @@ function session(id: string, title: string, updatedAt: string): Session {
     tool_count: 0,
     created_at: '2026-06-12T16:00:00Z',
     updated_at: updatedAt,
+    last_activity_at: updatedAt,
     completed_at: null,
     archived_at: null,
   }

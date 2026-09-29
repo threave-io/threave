@@ -134,6 +134,7 @@ type sessionResponse struct {
 	PendingPermissionCount   int     `json:"pending_permission_count"`
 	CreatedAt                string  `json:"created_at"`
 	UpdatedAt                string  `json:"updated_at"`
+	LastActivityAt           *string `json:"last_activity_at"`
 	CompletedAt              *string `json:"completed_at"`
 	ArchivedAt               *string `json:"archived_at"`
 	PinnedAt                 *string `json:"pinned_at"`
@@ -899,6 +900,14 @@ func (api API) sessionResponses(ctx context.Context, sessions []store.Session) (
 }
 
 func (api API) sessionResponse(ctx context.Context, session store.Session) (sessionResponse, error) {
+	if live, ok := api.events.(SessionActivityEventService); ok {
+		for _, event := range live.LiveSessionSnapshot(session.ID).Events {
+			if store.IsSessionActivityEventType(event.Type) && (session.LastActivityAt == nil || event.CreatedAt.After(*session.LastActivityAt)) {
+				activityAt := event.CreatedAt
+				session.LastActivityAt = &activityAt
+			}
+		}
+	}
 	return sessionResponseFromStore(
 		session,
 		session.PendingInputCount > 0,
@@ -907,6 +916,11 @@ func (api API) sessionResponse(ctx context.Context, session store.Session) (sess
 }
 
 func sessionResponseFromStore(session store.Session, pendingInput bool, pendingPermissionCount int) sessionResponse {
+	var lastActivityAt *string
+	if session.LastActivityAt != nil {
+		formatted := session.LastActivityAt.UTC().Format(time.RFC3339Nano)
+		lastActivityAt = &formatted
+	}
 	var completedAt *string
 	if session.CompletedAt != nil {
 		formatted := session.CompletedAt.UTC().Format(time.RFC3339Nano)
@@ -949,6 +963,7 @@ func sessionResponseFromStore(session store.Session, pendingInput bool, pendingP
 		PendingPermissionCount:   pendingPermissionCount,
 		CreatedAt:                session.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:                session.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		LastActivityAt:           lastActivityAt,
 		CompletedAt:              completedAt,
 		ArchivedAt:               archivedAt,
 		PinnedAt:                 pinnedAt,

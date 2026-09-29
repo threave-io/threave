@@ -123,6 +123,7 @@ import {
 } from '@/lib/server-connectivity'
 import { cn } from '@/lib/utils'
 import { applySessionEvent } from '@/lib/session-events'
+import { preserveSessionActivity, sortSessions } from '@/lib/session-order'
 import { readFileDraft } from '@/lib/file-drafts'
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover'
 import {
@@ -411,7 +412,7 @@ function App() {
             return current
           }
           const next = sortSessions(
-            current.map((session) => (session.id === updatedSession.id ? updatedSession : session)),
+            current.map((session) => (session.id === updatedSession.id ? preserveSessionActivity(updatedSession, session) : session)),
           )
           sessionsRef.current = next
           void writePersistentCachedSession(updatedSession)
@@ -432,7 +433,7 @@ function App() {
       ) {
         next = current.filter((item) => item.id !== session.id)
       } else {
-        next = sortSessions([session, ...current.filter((item) => item.id !== session.id)])
+        next = sortSessions([preserveSessionActivity(session, current.find((item) => item.id === session.id)), ...current.filter((item) => item.id !== session.id)])
       }
       sessionsRef.current = next
       return next
@@ -788,7 +789,7 @@ function App() {
           const updatedSession = applySessionEvent(session, event, status)
           if (updatedSession === session) return session
           changed = true
-          void writePersistentCachedSession(updatedSession)
+          if (!isTransientEvent(event)) void writePersistentCachedSession(updatedSession)
           return updatedSession
         }),
       )
@@ -875,13 +876,13 @@ function App() {
         return
       }
       if (isTransientEvent(event)) {
-        ingestClientEvent(event)
+        if (ingestClientEvent(event)) applySessionActivityEvent(event)
         scheduleDashboardRefresh()
         return
       }
       if (ingestClientEvent(event)) applyIngestedSessionEvent(event)
     },
-    [applyIngestedSessionEvent, scheduleDashboardRefresh],
+    [applyIngestedSessionEvent, applySessionActivityEvent, scheduleDashboardRefresh],
   )
 
   const {
@@ -2676,7 +2677,7 @@ function preferFresherSessionSnapshots(incoming: Session[], current: Session[]) 
   const currentByID = new Map(current.map((session) => [session.id, session]))
   return incoming.map((session) => {
     const existing = currentByID.get(session.id)
-    return existing && latestSessionSeq(existing) > latestSessionSeq(session) ? existing : session
+    return existing && latestSessionSeq(existing) > latestSessionSeq(session) ? existing : preserveSessionActivity(session, existing)
   })
 }
 
@@ -2694,20 +2695,6 @@ function removeSetValue(current: ReadonlySet<string>, value: string) {
   const next = new Set(current)
   next.delete(value)
   return next
-}
-
-function sortSessions(sessions: Session[]) {
-  return [...sessions].sort((left, right) => {
-    const leftPinned = Boolean(left.pinned_at)
-    const rightPinned = Boolean(right.pinned_at)
-    if (leftPinned !== rightPinned) return rightPinned ? 1 : -1
-    if (leftPinned && rightPinned) {
-      const byPinned = new Date(right.pinned_at!).getTime() - new Date(left.pinned_at!).getTime()
-      if (byPinned !== 0) return byPinned
-    }
-    const byUpdated = new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
-    return byUpdated !== 0 ? byUpdated : right.id.localeCompare(left.id)
-  })
 }
 
 function paneWidthStyle(width: number): CSSProperties {

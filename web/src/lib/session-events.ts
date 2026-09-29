@@ -1,8 +1,11 @@
 import type { AgentEvent, Session, SessionAgentOptions, SessionStatus } from '@/lib/api'
 import { isTerminalEvent, isTransientEvent } from '@/lib/events'
 import { latestSessionSeq } from '@/lib/session-attention'
+import { applySessionActivity } from '@/lib/session-order'
 
 export function applySessionEvent(session: Session, event: AgentEvent, status: SessionStatus | null) {
+  session = applySessionActivity(session, event)
+  if (isTransientEvent(event)) return session
   const currentLastSeq = latestSessionSeq(session)
   if (event.seq <= currentLastSeq) {
     return session

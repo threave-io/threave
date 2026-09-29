@@ -73,6 +73,7 @@ type Session struct {
 	NotificationAttentionSeq int64
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
+	LastActivityAt           *time.Time
 	CompletedAt              *time.Time
 	ArchivedAt               *time.Time
 	PinnedAt                 *time.Time

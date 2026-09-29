@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
+	"time"
 )
 
 // ListSessionTree paginates roots while returning every visible descendant and
@@ -32,16 +34,41 @@ func (s *Store) ListSessionTree(ctx context.Context, rootLimit int, includeArchi
 		return session.ID
 	}
 	eligibleRoots := map[string]bool{}
+	rootActivity := map[string]time.Time{}
 	for _, session := range all {
 		if includeArchived || session.ArchivedAt == nil {
-			eligibleRoots[rootFor(session)] = true
+			rootID := rootFor(session)
+			eligibleRoots[rootID] = true
+			activity := session.CreatedAt
+			if session.LastActivityAt != nil {
+				activity = *session.LastActivityAt
+			}
+			if activity.After(rootActivity[rootID]) {
+				rootActivity[rootID] = activity
+			}
 		}
 	}
-	selectedRoots := map[string]bool{}
+	roots := []Session{}
 	for _, session := range all {
-		if session.ParentSessionID == "" && eligibleRoots[session.ID] && len(selectedRoots) < rootLimit {
-			selectedRoots[session.ID] = true
+		if session.ParentSessionID == "" && eligibleRoots[session.ID] {
+			roots = append(roots, session)
 		}
+	}
+	// Rank whole groups before applying the root limit so an active child cannot
+	// disappear from the snapshot because its parent has an older timestamp.
+	sort.SliceStable(roots, func(i, j int) bool {
+		left, right := roots[i], roots[j]
+		if (left.PinnedAt != nil) != (right.PinnedAt != nil) {
+			return left.PinnedAt != nil
+		}
+		if left.PinnedAt != nil && !left.PinnedAt.Equal(*right.PinnedAt) {
+			return left.PinnedAt.After(*right.PinnedAt)
+		}
+		return rootActivity[left.ID].After(rootActivity[right.ID])
+	})
+	selectedRoots := map[string]bool{}
+	for _, root := range roots[:min(rootLimit, len(roots))] {
+		selectedRoots[root.ID] = true
 	}
 	visible := map[string]bool{}
 	for _, session := range all {
@@ -85,14 +112,14 @@ func (s *Store) ListSessionChildren(ctx context.Context, parentSessionID string,
 	       sessions.last_durable_event_seq, sessions.materialized_tool_count, sessions.materialized_token_count,
 	       sessions.pending_input_count, sessions.pending_permission_count,
 	       COALESCE((SELECT seq FROM notification_attention WHERE notification_attention.session_id = sessions.id), 0),
-	       sessions.created_at, sessions.updated_at, sessions.completed_at, sessions.archived_at, sessions.pinned_at,
+	       sessions.created_at, sessions.updated_at, sessions.last_activity_at, sessions.completed_at, sessions.archived_at, sessions.pinned_at,
 	       sessions.parent_session_id, sessions.spawned_by_run_id, sessions.lineage_depth,
 	       (SELECT COUNT(*) FROM sessions children WHERE children.parent_session_id = sessions.id AND children.archived_at IS NULL)
 	FROM sessions JOIN descendants ON descendants.id = sessions.id`
 	if !recursive {
 		query += ` WHERE sessions.parent_session_id = ?`
 	}
-	query += ` ORDER BY sessions.lineage_depth ASC, sessions.updated_at DESC, sessions.id DESC`
+	query += ` ORDER BY sessions.lineage_depth ASC, COALESCE(sessions.last_activity_at, sessions.created_at) DESC, sessions.id DESC`
 	args := []any{parentSessionID}
 	if !recursive {
 		args = append(args, parentSessionID)

@@ -172,7 +172,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 		        durable_event_count, last_durable_event_seq, materialized_tool_count, materialized_token_count,
 		        pending_input_count, pending_permission_count,
 		        COALESCE((SELECT seq FROM notification_attention WHERE notification_attention.session_id = sessions.id), 0) AS notification_attention_seq,
-		        created_at, updated_at, completed_at, archived_at, pinned_at,
+		        created_at, updated_at, last_activity_at, completed_at, archived_at, pinned_at,
 		        parent_session_id, spawned_by_run_id, lineage_depth,
 		        (SELECT COUNT(*) FROM sessions children WHERE children.parent_session_id = sessions.id AND children.archived_at IS NULL) AS child_count
 		 FROM sessions
@@ -198,7 +198,7 @@ func (s *Store) ListSessions(ctx context.Context, params ListSessionsParams) ([]
 		        durable_event_count, last_durable_event_seq, materialized_tool_count, materialized_token_count,
 		        pending_input_count, pending_permission_count,
 		        COALESCE((SELECT seq FROM notification_attention WHERE notification_attention.session_id = sessions.id), 0) AS notification_attention_seq,
-		        created_at, updated_at, completed_at, archived_at, pinned_at,
+		        created_at, updated_at, last_activity_at, completed_at, archived_at, pinned_at,
 		        parent_session_id, spawned_by_run_id, lineage_depth,
 		        (SELECT COUNT(*) FROM sessions children WHERE children.parent_session_id = sessions.id AND children.archived_at IS NULL) AS child_count
 		 FROM sessions`
@@ -215,7 +215,7 @@ func (s *Store) ListSessions(ctx context.Context, params ListSessionsParams) ([]
 		query += ` WHERE ` + strings.Join(filters, ` AND `)
 	}
 	query += ` ORDER BY CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END,
-		 pinned_at DESC, updated_at DESC, created_at DESC, id DESC
+		 pinned_at DESC, COALESCE(last_activity_at, created_at) DESC, created_at DESC, id DESC
 		 LIMIT ?`
 	args = append(args, limit)
 
@@ -870,6 +870,12 @@ func insertEventBlob(ctx context.Context, tx *sql.Tx, blob EventBlob) error {
 	return nil
 }
 
+// IsSessionActivityEventType excludes session metadata and provider debug traffic.
+func IsSessionActivityEventType(eventType string) bool {
+	return strings.HasPrefix(eventType, "user.") || strings.HasPrefix(eventType, "agent.") ||
+		strings.HasPrefix(eventType, "tool.") || strings.HasPrefix(eventType, "file.change.")
+}
+
 func updateSessionEventSummary(ctx context.Context, tx *sql.Tx, event Event, sessionTotalTokens *int64) error {
 	durableIncrement := 1
 	if strings.HasSuffix(event.Type, ".delta") {
@@ -908,6 +914,10 @@ func updateSessionEventSummary(ctx context.Context, tx *sql.Tx, event Event, ses
 	if sessionTotalTokens != nil {
 		tokenCount = *sessionTotalTokens
 	}
+	var activityAt any
+	if IsSessionActivityEventType(event.Type) {
+		activityAt = formatTime(event.CreatedAt)
+	}
 	resetPendingInt := 0
 	if resetPending {
 		resetPendingInt = 1
@@ -916,13 +926,15 @@ func updateSessionEventSummary(ctx context.Context, tx *sql.Tx, event Event, ses
 	if _, err := tx.ExecContext(
 		ctx,
 		`UPDATE sessions
-		 SET durable_event_count = durable_event_count + ?,
+		 SET last_activity_at = COALESCE(?, last_activity_at),
+		     durable_event_count = durable_event_count + ?,
 		     last_durable_event_seq = CASE WHEN ? = 1 THEN MAX(last_durable_event_seq, ?) ELSE last_durable_event_seq END,
 		     materialized_tool_count = materialized_tool_count + ?,
 		     materialized_token_count = CASE WHEN ? >= 0 THEN ? ELSE materialized_token_count END,
 		     pending_input_count = CASE WHEN ? = 1 THEN 0 ELSE MAX(0, pending_input_count + ?) END,
 		     pending_permission_count = CASE WHEN ? = 1 THEN 0 ELSE MAX(0, pending_permission_count + ?) END
 		 WHERE id = ?`,
+		activityAt,
 		durableIncrement,
 		durableIncrement,
 		event.Seq,
@@ -1773,6 +1785,7 @@ func scanSession(row rowScanner) (Session, error) {
 	var notificationAttentionSeq int64
 	var createdAt string
 	var updatedAt string
+	var lastActivityAt sql.NullString
 	var completedAt sql.NullString
 	var archivedAt sql.NullString
 	var pinnedAt sql.NullString
@@ -1798,6 +1811,7 @@ func scanSession(row rowScanner) (Session, error) {
 		&notificationAttentionSeq,
 		&createdAt,
 		&updatedAt,
+		&lastActivityAt,
 		&completedAt,
 		&archivedAt,
 		&pinnedAt,
@@ -1844,6 +1858,13 @@ func scanSession(row rowScanner) (Session, error) {
 	session.NotificationAttentionSeq = notificationAttentionSeq
 	session.CreatedAt = parsedCreatedAt
 	session.UpdatedAt = parsedUpdatedAt
+	if lastActivityAt.Valid {
+		parsed, err := parseTime(lastActivityAt.String)
+		if err != nil {
+			return Session{}, fmt.Errorf("parse session last_activity_at: %w", err)
+		}
+		session.LastActivityAt = &parsed
+	}
 
 	if completedAt.Valid {
 		parsedCompletedAt, err := parseTime(completedAt.String)

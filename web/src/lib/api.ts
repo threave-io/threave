@@ -97,6 +97,7 @@ export type Session = {
   workspace_path: string
   agent_options?: SessionAgentOptions
   event_count: number
+  last_activity_at?: string | null
   last_event_seq?: number
   tool_count: number
   token_count?: number

@@ -27,6 +27,41 @@ import (
 	"github.com/threave-io/threave/internal/store"
 )
 
+func TestSessionReadsExposeWorkAndStreamingActivityWithoutChangingIt(t *testing.T) {
+	ctx := context.Background()
+	database, events, _, handler := newIntegrationAPI(t, ctx, fake.New())
+	session, err := database.CreateSession(ctx, store.CreateSessionParams{Title: "Activity", AgentType: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, eventType := range []string{"user.message.completed", "agent.message.delta"} {
+		event, err := events.Append(ctx, eventservice.AppendParams{
+			SessionID: session.ID, Type: eventType, Role: "assistant", Status: store.EventStatusCompleted,
+			Payload: json.RawMessage(`{"text":"Work"}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := event.CreatedAt.UTC().Format(time.RFC3339Nano)
+		for _, read := range []*httptest.ResponseRecorder{
+			get(handler, "/api/sessions/"+session.ID),
+			postJSON(handler, "/api/sessions/"+session.ID+"/notification-attention/clear", `{}`),
+		} {
+			if read.Code != http.StatusOK {
+				t.Fatalf("read activity: %d %s", read.Code, read.Body.String())
+			}
+			var response sessionResponse
+			decodeJSON(t, read, &response)
+			if response.LastActivityAt == nil || *response.LastActivityAt != want {
+				t.Fatalf("expected event activity %s, got %v", want, response.LastActivityAt)
+			}
+			if response.LastEventSeq != 1 {
+				t.Fatalf("streamed activity changed durable cursor: %d", response.LastEventSeq)
+			}
+		}
+	}
+}
+
 func TestCreateSessionCreatesIdleFakeAgentSession(t *testing.T) {
 	ctx := context.Background()
 	workspace := canonicalPath(t, t.TempDir())
