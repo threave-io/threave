@@ -1,8 +1,11 @@
 import type { ComponentProps } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { Session } from '@/lib/api'
 import { SessionList } from '@/components/session-list'
+import { sessionGroupStorageKey } from '@/hooks/use-session-group-preference'
+
+beforeEach(() => window.localStorage.clear())
 
 const sessions: Session[] = [
   {
@@ -405,6 +408,72 @@ test('session list hides stale child controls when no visible children remain', 
 
   expect(screen.queryByRole('button', { name: 'Collapse Parent' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Expand Parent' })).not.toBeInTheDocument()
+})
+
+test('session groups remember collapse and expansion across remounts, including nested groups', async () => {
+  const user = userEvent.setup()
+  const parent = sessionFixture('sess_parent', 'Parent')
+  const child = { ...sessionFixture('sess_child', 'Child'), parent_session_id: parent.id }
+  const grandchild = { ...sessionFixture('sess_grandchild', 'Grandchild'), parent_session_id: child.id }
+  const groupSessions = [parent, child, grandchild]
+  const first = render(<SessionListHarness sessions={groupSessions} />)
+
+  await user.click(screen.getByRole('button', { name: 'Collapse Child' }))
+  await user.click(screen.getByRole('button', { name: 'Collapse Parent' }))
+  first.unmount()
+
+  const second = render(<SessionListHarness sessions={[]} />)
+  second.rerender(<SessionListHarness sessions={groupSessions} />)
+  expect(screen.queryByRole('button', { name: 'Child' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Expand Parent' }))
+  expect(screen.getByRole('button', { name: 'Child' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Grandchild' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Expand Child' }))
+  second.unmount()
+
+  render(<SessionListHarness sessions={groupSessions} />)
+  expect(screen.getByRole('button', { name: 'Grandchild' })).toBeInTheDocument()
+})
+
+test('desktop and mobile lists share group preferences', async () => {
+  const user = userEvent.setup()
+  const parent = sessionFixture('sess_parent', 'Parent')
+  const child = { ...sessionFixture('sess_child', 'Child'), parent_session_id: parent.id }
+  const desktop = render(<SessionListHarness sessions={[parent, child]} />)
+  const mobile = render(<SessionListHarness sessions={[parent, child]} variant="embedded" />)
+
+  await user.click(within(desktop.container).getByRole('button', { name: 'Collapse Parent' }))
+  expect(within(mobile.container).queryByRole('button', { name: 'Child' })).not.toBeInTheDocument()
+  await user.click(within(mobile.container).getByRole('button', { name: 'Expand Parent' }))
+  expect(within(desktop.container).getByRole('button', { name: 'Child' })).toBeInTheDocument()
+})
+
+test.each(['invalid JSON', '{"unexpected":true}', '[null,42]'])('invalid group preferences keep the list usable: %s', (stored) => {
+  window.localStorage.setItem(sessionGroupStorageKey, stored)
+  const parent = sessionFixture('sess_parent', 'Parent')
+  const child = { ...sessionFixture('sess_child', 'Child'), parent_session_id: parent.id }
+  render(<SessionListHarness sessions={[parent, child]} />)
+
+  expect(screen.getByRole('button', { name: 'Child' })).toBeInTheDocument()
+})
+
+test('session groups still toggle when browser storage rejects writes', async () => {
+  const user = userEvent.setup()
+  const parent = sessionFixture('sess_parent', 'Parent')
+  const child = { ...sessionFixture('sess_child', 'Child'), parent_session_id: parent.id }
+  render(<SessionListHarness sessions={[parent, child]} />)
+  const write = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+    throw new DOMException('Storage is full', 'QuotaExceededError')
+  })
+
+  try {
+    await user.click(screen.getByRole('button', { name: 'Collapse Parent' }))
+    expect(screen.queryByRole('button', { name: 'Child' })).not.toBeInTheDocument()
+  } finally {
+    write.mockRestore()
+    await user.click(screen.getByRole('button', { name: 'Expand Parent' }))
+  }
+  expect(screen.getByRole('button', { name: 'Child' })).toBeInTheDocument()
 })
 
 function baseProps() {

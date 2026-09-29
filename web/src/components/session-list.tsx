@@ -1,6 +1,7 @@
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import { Archive, BookOpen, ChevronDown, ChevronRight, FolderInput, GitBranch, LayoutDashboard, MessageSquare, Pin, Plus, RotateCcw, Search } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { useSessionGroupPreference } from '@/hooks/use-session-group-preference'
 import type { Session } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -61,7 +62,7 @@ export function SessionList({
   variant = 'full',
 }: Props) {
   const showHeader = variant === 'full'
-  const [collapsedSessionIDs, setCollapsedSessionIDs] = useState<ReadonlySet<string>>(new Set())
+  const { collapsedSessionIDs, toggleSessionGroup } = useSessionGroupPreference()
   const treeRows = buildSessionTreeRows(sessions, collapsedSessionIDs)
 
   return (
@@ -166,7 +167,7 @@ export function SessionList({
                 depth={depth}
                 hasChildren={hasChildren}
                 expanded={!collapsedSessionIDs.has(session.id)}
-                onToggle={() => setCollapsedSessionIDs((current) => toggleSetValue(current, session.id))}
+                onToggle={() => toggleSessionGroup(session.id)}
               />
             ))}
           </div>
@@ -412,13 +413,6 @@ function buildSessionTreeRows(
   }
   roots.forEach((session) => visit(session, 0))
   return rows
-}
-
-function toggleSetValue(current: ReadonlySet<string>, value: string) {
-  const next = new Set(current)
-  if (next.has(value)) next.delete(value)
-  else next.add(value)
-  return next
 }
 
 function ShortcutHint({ shortcut }: { shortcut: string }) {
