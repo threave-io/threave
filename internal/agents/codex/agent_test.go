@@ -1532,7 +1532,7 @@ func runFakeAppServer(mode string) {
 		case "turn/start":
 			if expected := os.Getenv("GORCHESTRA_FAKE_CODEX_EXPECT_CONTEXT"); expected != "" {
 				prompt := fakeCodexPromptText(request.Params)
-				if !strings.Contains(prompt, "<gorchestra_context>\n"+expected+"\n</gorchestra_context>") || !strings.HasSuffix(prompt, "\n\nSay hello") {
+				if !strings.Contains(prompt, "<threave_context>\n"+expected+"\n</threave_context>") || !strings.HasSuffix(prompt, "\n\nSay hello") {
 					os.Exit(11)
 				}
 			}

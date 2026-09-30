@@ -2698,7 +2698,13 @@ The result contains the child session ID and exact run ID. Then use:
   "$THREAVE_BIN" runs wait RUN_ID --timeout 10m --json
   "$THREAVE_BIN" runs report RUN_ID --json
 
-Use "$THREAVE_BIN" search "QUERY" --session current --format ndjson to search session titles, durable history, and this session's workspace files. Use --session none for global-only search.
+You can search past chats across Threave sessions to find earlier discussions, decisions, and agent work. Search session titles and durable chat history without workspace files:
+  "$THREAVE_BIN" search "QUERY" --session none --format ndjson
+
+To also search this session's workspace files:
+  "$THREAVE_BIN" search "QUERY" --session current --format ndjson
+
+Chat history search always spans sessions. The --session option only selects the workspace files to include; it does not limit which chats are searched. Results include session IDs and history event sequence numbers so you can identify the source.
 
 Use "$THREAVE_BIN" commands --json to discover the complete CLI contract. Use runs watch to stream activity. Child sessions share this workspace, so assign disjoint edits when delegating parallel work.
 

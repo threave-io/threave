@@ -576,7 +576,7 @@ func runFakeClaude() {
 	if expected := os.Getenv("GORCHESTRA_FAKE_CLAUDE_EXPECT_CONTEXT"); expected != "" {
 		message, _ := user["message"].(map[string]any)
 		prompt := mapString(message, "content")
-		if !strings.Contains(prompt, "<gorchestra_context>\n"+expected+"\n</gorchestra_context>") || !strings.HasSuffix(prompt, "\n\nhello") {
+		if !strings.Contains(prompt, "<threave_context>\n"+expected+"\n</threave_context>") || !strings.HasSuffix(prompt, "\n\nhello") {
 			os.Exit(11)
 		}
 	}

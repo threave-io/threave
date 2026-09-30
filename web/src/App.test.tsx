@@ -1058,7 +1058,10 @@ test('mobile context meter does not invent counts before usage has arrived', asy
 
 test('header files view opens workspace files inline', async () => {
   const user = userEvent.setup()
-  vi.stubGlobal('fetch', fetchMock({ fileEntry: true }))
+  vi.stubGlobal('fetch', fetchMock({
+    fileEntry: true,
+    sessions: [{ ...firstSession, parent_session_id: secondSession.id, lineage_depth: 1 }, secondSession],
+  }))
 
   render(<App />)
 
@@ -1068,6 +1071,10 @@ test('header files view opens workspace files inline', async () => {
   await waitFor(() => expect(window.location.pathname).toBe('/sessions/inspect-repo/files'))
   const filesHeader = screen.getByTestId('floating-files-header')
   expect(within(filesHeader).getByRole('button', { name: 'Show session settings' })).toBeInTheDocument()
+  for (const header of [filesHeader, screen.getByTestId('mobile-floating-files-header')]) {
+    expect(within(header).queryByText('Parent session')).not.toBeInTheDocument()
+    expect(header.querySelector('.lucide-git-branch')).not.toBeInTheDocument()
+  }
   expect(screen.getByText('No file selected').closest('.host-console-frame')).toBeTruthy()
 
   await user.click((await screen.findAllByRole('button', { name: /main\.go/i }))[0])

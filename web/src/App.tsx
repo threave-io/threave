@@ -2473,7 +2473,7 @@ function FilesWorkspaceHeader({
   errorMessage,
   leadingAction,
   headerActions,
-  showParentSession = true,
+  showParentSession = false,
 }: {
   session: Session | null
   resolvingSessionID: string | null

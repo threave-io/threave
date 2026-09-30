@@ -137,37 +137,45 @@ left unspecified because the agent should discover actual installed capabilities
 The HTTP orchestration layer adds run-scoped environment variables to every real
 provider process:
 
-- `GORCHESTRA_BIN`: the absolute path to the running Gorchestra executable.
-- `GORCHESTRA_API_URL`: the API URL that executable should target.
-- `GORCHESTRA_SESSION_ID`: the current session, used as the default child parent.
-- `GORCHESTRA_RUN_ID`: the exact current run, recorded as the child's spawning run.
+- `THREAVE_BIN`: the absolute path to the running Threave executable.
+- `THREAVE_API_URL`: the API URL that executable should target.
+- `THREAVE_SESSION_ID`: the current session, used as the default child parent.
+- `THREAVE_RUN_ID`: the exact current run, recorded as the child's spawning run.
 
 For normal message runs, it also prefixes the provider prompt with this text:
 
 ```xml
-<gorchestra_context>
-This session is running inside Gorchestra, an agent orchestration service that coordinates multiple concurrent agents across supported providers.
+<threave_context>
+This session is running inside Threave, an agent orchestration service that coordinates multiple concurrent agents across supported providers.
 This is a root session.
 
 Current session ID: sess_current
 Current run ID: run_current
 Parent session ID: none
 
-The current session and run IDs are also available as $GORCHESTRA_SESSION_ID and $GORCHESTRA_RUN_ID.
+The current session and run IDs are also available as $THREAVE_SESSION_ID and $THREAVE_RUN_ID.
 
-You can use Gorchestra's CLI to delegate independent work to child agents and monitor their exact runs. New runs automatically become children of this session and inherit its provider, resolved options, and workspace unless you override supported settings.
+You can use Threave's CLI to delegate independent work to child agents and monitor their exact runs. New runs automatically become children of this session and inherit its provider, resolved options, and workspace unless you override supported settings.
 
 To delegate a named task:
-  "$GORCHESTRA_BIN" run --title "TASK NAME" --prompt-file task.md --detach --json
+  "$THREAVE_BIN" run --title "TASK NAME" --prompt-file task.md --detach --json
 
 The result contains the child session ID and exact run ID. Then use:
-  "$GORCHESTRA_BIN" runs wait RUN_ID --timeout 10m --json
-  "$GORCHESTRA_BIN" runs report RUN_ID --json
+  "$THREAVE_BIN" runs wait RUN_ID --timeout 10m --json
+  "$THREAVE_BIN" runs report RUN_ID --json
 
-Use "$GORCHESTRA_BIN" search "QUERY" --session current --format ndjson to search session titles, durable history, and this session's workspace files. Use --session none for global-only search.
+You can search past chats across Threave sessions to find earlier discussions, decisions, and agent work. Search session titles and durable chat history without workspace files:
+  "$THREAVE_BIN" search "QUERY" --session none --format ndjson
 
-Use "$GORCHESTRA_BIN" commands --json to discover the complete CLI contract. Use runs watch to stream activity. Child sessions share this workspace, so assign disjoint edits when delegating parallel work.
-</gorchestra_context>
+To also search this session's workspace files:
+  "$THREAVE_BIN" search "QUERY" --session current --format ndjson
+
+Chat history search always spans sessions. The --session option only selects the workspace files to include; it does not limit which chats are searched. Results include session IDs and history event sequence numbers so you can identify the source.
+
+Use "$THREAVE_BIN" commands --json to discover the complete CLI contract. Use runs watch to stream activity. Child sessions share this workspace, so assign disjoint edits when delegating parallel work.
+
+The previous GORCHESTRA_BIN, GORCHESTRA_SESSION_ID, GORCHESTRA_RUN_ID, and GORCHESTRA_API_URL variables remain available for older tooling.
+</threave_context>
 ```
 
 Delegated sessions receive the same bootstrap with `This is a delegated child

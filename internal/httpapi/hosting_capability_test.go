@@ -47,7 +47,11 @@ func TestAgentRuntimeContextIntroducesOrchestrationAndDelegation(t *testing.T) {
 		"runs wait RUN_ID --timeout 10m --json",
 		"runs report RUN_ID --json",
 		`search "QUERY" --session current --format ndjson`,
-		"Use --session none for global-only search",
+		"You can search past chats across Threave sessions",
+		`search "QUERY" --session none --format ndjson`,
+		"Chat history search always spans sessions",
+		"it does not limit which chats are searched",
+		"Results include session IDs and history event sequence numbers",
 		`"$THREAVE_BIN" commands --json`,
 	} {
 		if !strings.Contains(context, expected) {
@@ -67,6 +71,9 @@ func TestAgentRuntimeContextIdentifiesDelegatedChild(t *testing.T) {
 		"Current session ID: sess_child",
 		"Current run ID: run_child",
 		"Parent session ID: sess_parent",
+		"You can search past chats across Threave sessions",
+		`search "QUERY" --session none --format ndjson`,
+		`search "QUERY" --session current --format ndjson`,
 	} {
 		if !strings.Contains(context, expected) {
 			t.Fatalf("runtime context missing %q: %s", expected, context)

@@ -144,7 +144,7 @@ func (input AgentInput) ProviderMessage() string {
 		return input.Message
 	}
 
-	message := "<gorchestra_context>\n" + context + "\n</gorchestra_context>"
+	message := "<threave_context>\n" + context + "\n</threave_context>"
 	if input.Message != "" {
 		message += "\n\n" + input.Message
 	}

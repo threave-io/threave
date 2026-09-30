@@ -318,7 +318,7 @@ func runFakePi() {
 			if expected := os.Getenv("GORCHESTRA_FAKE_PI_EXPECT_CONTEXT"); expected != "" {
 				data, _ := request["data"].(map[string]any)
 				prompt, _ := data["prompt"].(string)
-				if !strings.Contains(prompt, "<gorchestra_context>\n"+expected+"\n</gorchestra_context>") || !strings.HasSuffix(prompt, "\n\nhello") {
+				if !strings.Contains(prompt, "<threave_context>\n"+expected+"\n</threave_context>") || !strings.HasSuffix(prompt, "\n\nhello") {
 					_ = encoder.Encode(map[string]any{"commandId": commandID, "error": "unexpected prompt context"})
 					continue
 				}

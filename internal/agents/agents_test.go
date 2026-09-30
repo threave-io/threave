@@ -10,11 +10,11 @@ import (
 func TestAgentInputProviderMessageKeepsOriginalMessageSeparate(t *testing.T) {
 	input := AgentInput{
 		Message: "build the app",
-		Context: "  Hosting is available through gorchestra host.  ",
+		Context: "  Hosting is available through threave host.  ",
 	}
 
 	got := input.ProviderMessage()
-	want := "<gorchestra_context>\nHosting is available through gorchestra host.\n</gorchestra_context>\n\nbuild the app"
+	want := "<threave_context>\nHosting is available through threave host.\n</threave_context>\n\nbuild the app"
 	if got != want {
 		t.Fatalf("expected provider message %q, got %q", want, got)
 	}
