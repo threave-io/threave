@@ -96,3 +96,13 @@ jobs:
               --title "Threave ${{ steps.version.outputs.tag }}" \
               --generate-notes
           fi
+
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is required to dispatch the tap update."
+            exit 1
+          fi
+          gh workflow run update-threave.yml --repo threave-io/homebrew-tap --ref main
