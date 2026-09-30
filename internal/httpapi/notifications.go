@@ -170,3 +170,23 @@ func cleanOrigin(value string) string {
 func formatAPITime(value time.Time) string {
 	return value.UTC().Format(time.RFC3339Nano)
 }
+
+func (api API) seenNotificationHandler(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		SessionID string `json:"session_id"`
+		Seq       int64  `json:"seq"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024)).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if err := api.notifications.Seen(r.Context(), request.SessionID, request.Seq); err != nil {
+		if errors.Is(err, store.ErrInvalidArgument) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to acknowledge viewed completion")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"acknowledged": true})
+}

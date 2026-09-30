@@ -91,7 +91,7 @@ test('a rejected Stop request cannot trigger queue-to-composer restoration', asy
   expect(fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(0)
 })
 
-test('only the visible selected session acknowledges SSE notifications for this device', async () => {
+test('only visible selected approval requests use per-device SSE acknowledgments', async () => {
   const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, 'serviceWorker')
   const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
   const showNotification = vi.fn()
@@ -117,7 +117,7 @@ test('only the visible selected session acknowledges SSE notifications for this 
   try {
     const source = await findEventSource('/api/sessions/activity/stream')
     const acknowledgements = () => fetch.mock.calls.filter(([url]) => String(url) === '/api/notifications/acknowledge')
-    const completed = { ...event(8, 'agent.run.completed', {}), global_seq: 10 }
+    const completed = { ...event(8, 'agent.permission.requested', {}), global_seq: 10 }
     act(() => source.emit(completed))
     await waitFor(() => expect(acknowledgements()).toHaveLength(1))
     expect(JSON.parse(String(acknowledgements()[0][1]?.body))).toEqual({ endpoint: subscription.endpoint, session_id: 'sess_1', seq: 8 })
@@ -125,7 +125,7 @@ test('only the visible selected session acknowledges SSE notifications for this 
 
     act(() => {
       source.emit(completed) // Replay must not create a duplicate ACK or alert.
-      source.emit({ ...event(9, 'agent.run.completed', {}, 'sess_2'), global_seq: 11 })
+      source.emit({ ...event(9, 'agent.permission.requested', {}, 'sess_2'), global_seq: 11 })
       source.emit({ ...event(10, 'agent.message.completed', { text: 'Not a notification' }), global_seq: 12 })
     })
     visibility.mockReturnValue('hidden')
@@ -137,11 +137,13 @@ test('only the visible selected session acknowledges SSE notifications for this 
 
     fireEvent.click(screen.getAllByRole('button', { name: /Write docs/ })[0])
     act(() => {
-      source.emit({ ...event(13, 'agent.run.completed', {}), global_seq: 15 })
-      source.emit({ ...event(14, 'agent.run.completed', {}, 'sess_2'), global_seq: 16 })
+      source.emit({ ...event(13, 'agent.permission.requested', {}), global_seq: 15 })
+      source.emit({ ...event(14, 'agent.permission.requested', {}, 'sess_2'), global_seq: 16 })
     })
     await waitFor(() => expect(acknowledgements()).toHaveLength(3))
     expect(JSON.parse(String(acknowledgements()[2][1]?.body)).session_id).toBe('sess_2')
+    act(() => source.emit({ ...event(16, 'agent.run.completed', {}, 'sess_2'), global_seq: 17 }))
+    expect(acknowledgements()).toHaveLength(3)
     expect(showNotification).not.toHaveBeenCalled()
   } finally {
     app.unmount()

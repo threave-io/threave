@@ -37,6 +37,7 @@ type Store interface {
 	ListPushDeliveryAttempts(ctx context.Context, limit int) ([]store.PushDeliveryAttempt, error)
 	MarkNotificationAttention(ctx context.Context, params store.MarkNotificationAttentionParams) error
 	GetSession(ctx context.Context, id string) (store.Session, error)
+	GetEvent(ctx context.Context, sessionID string, seq int64) (store.Event, error)
 	ListRecentEvents(ctx context.Context, sessionID string, limit int) ([]store.Event, error)
 }
 
@@ -63,6 +64,7 @@ type Service struct {
 	logger          *log.Logger
 	ackMu           sync.Mutex
 	foregroundAcks  map[acknowledgementKey]time.Time
+	seenCompletions map[completionKey]time.Time
 	foregroundGrace time.Duration
 }
 
@@ -384,8 +386,12 @@ func (s *Service) sendToActiveSubscriptions(ctx context.Context, input notificat
 	}
 	// Give the SSE client a short opportunity to acknowledge the event before
 	// sending a user-visible push. Safari cannot safely discard received pushes.
-	if input.SessionID != "" && input.Seq > 0 && s.foregroundGrace > 0 {
-		timer := time.NewTimer(s.foregroundGrace)
+	grace := s.foregroundGrace
+	if isTerminalRunEvent(input.EventType) {
+		grace *= 2
+	}
+	if input.SessionID != "" && input.Seq > 0 && grace > 0 {
+		timer := time.NewTimer(grace)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
@@ -398,6 +404,9 @@ func (s *Service) sendToActiveSubscriptions(ctx context.Context, input notificat
 	var errs []error
 	attentionRecorded := false
 	for _, subscription := range subscriptions {
+		if isTerminalRunEvent(input.EventType) && s.completionSeen(input.SessionID, input.Seq, time.Now()) {
+			break
+		}
 		if input.SessionID != "" && input.Seq > 0 && s.acknowledged(subscription.Endpoint, input.SessionID, input.Seq, time.Now()) {
 			s.logf("notification send skipped: foreground acknowledgement endpoint=%s session_id=%s seq=%d", endpointFingerprint(subscription.Endpoint), input.SessionID, input.Seq)
 			continue

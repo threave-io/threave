@@ -64,3 +64,30 @@ func (s *acknowledgementNotificationService) Acknowledge(_ context.Context, endp
 	s.calls++
 	return s.err
 }
+
+func (s *acknowledgementNotificationService) Seen(_ context.Context, sessionID string, seq int64) error {
+	s.sessionID, s.seq = sessionID, seq
+	s.calls++
+	return s.err
+}
+
+func TestSeenNotificationRoute(t *testing.T) {
+	for _, test := range []struct {
+		body   string
+		err    error
+		status int
+	}{
+		{`{"session_id":"s","seq":8}`, nil, 200},
+		{`{`, nil, 400},
+		{`{"session_id":"` + strings.Repeat("x", 9000) + `"}`, nil, 400},
+		{`{}`, store.ErrInvalidArgument, 400},
+		{`{}`, errors.New("private storage detail"), 500},
+	} {
+		service := &acknowledgementNotificationService{err: test.err}
+		response := httptest.NewRecorder()
+		NewRouter(Dependencies{Notifications: service}).ServeHTTP(response, httptest.NewRequest("POST", "/api/notifications/seen", strings.NewReader(test.body)))
+		if response.Code != test.status || strings.Contains(response.Body.String(), "private storage detail") {
+			t.Fatalf("unexpected response: %d %s", response.Code, response.Body)
+		}
+	}
+}

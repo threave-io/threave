@@ -1733,3 +1733,10 @@ async function requestNoContentWithSignal(url: string, init: RequestInit) {
     throw new APIError(response.status, message)
   }
 }
+
+export async function markNotificationSeen(sessionID: string, seq: number) {
+  return requestJSON<{ acknowledged: boolean }>('/api/notifications/seen', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionID, seq }),
+  })
+}

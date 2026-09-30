@@ -45,6 +45,7 @@ import type {
   ChatTranscriptToolContent,
   TranscriptSequenceRange,
 } from '@/lib/events'
+import { useViewedCompletion, viewedCompletion } from '@/hooks/use-viewed-completion'
 import { buildChatTimeline } from '@/lib/events'
 import { clipboardCopyErrorMessage, copyText } from '@/lib/clipboard'
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -144,6 +145,9 @@ export function ChatTranscript({
   const previousOptimisticMessageIDRef = useRef(latestOptimisticMessageID)
   const scrollDebug = useContext(ClientDebugContext) ?? clientDebugEnabled()
   const scrollerElementRef = useRef<HTMLDivElement | null>(null)
+  const completion = useMemo(() => viewedCompletion(events, timeline), [events, timeline])
+  useViewedCompletion(scrollerElementRef, completion, !hasNewerEvents && !loading && optimisticUserMessages.length === 0,
+    Math.max(0, bottomInsetHeight), 0)
   const scrollDebugReadoutRef = useRef<HTMLDivElement | null>(null)
   const initiallyFollowingTail = focusSeq <= 0 && (pinToLatestOnMount || !hasNewerEvents)
   const followingTailRef = useRef(initiallyFollowingTail)
@@ -793,6 +797,7 @@ export function ChatTranscript({
                 onOpenFilePath={onOpenFilePath}
                 onFollowUp={onFollowUp}
               />
+              {completion?.rowID === item.id ? <div data-viewed-completion aria-hidden="true" className="h-px w-full" /> : null}
             </div>
           )
             }

@@ -835,7 +835,7 @@ function App() {
       applySessionActivityEvent(event)
       if (selected) selectedEventsRef.current = appendEvent(selectedEventsRef.current, event)
       if (selected && document.visibilityState === 'visible') {
-        void acknowledgeSessionNotification(event)
+        if (event.type === 'agent.permission.requested') void acknowledgeSessionNotification(event)
       } else {
         playSessionStopSound(event)
       }

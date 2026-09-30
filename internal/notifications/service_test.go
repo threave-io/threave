@@ -415,3 +415,12 @@ func testResponse(statusCode int) *http.Response {
 		Body:       io.NopCloser(bytes.NewReader(nil)),
 	}
 }
+
+func (s *memoryStore) GetEvent(_ context.Context, sessionID string, seq int64) (store.Event, error) {
+	for _, event := range s.recentEvents {
+		if event.SessionID == sessionID && event.Seq == seq {
+			return event, nil
+		}
+	}
+	return store.Event{}, store.ErrNotFound
+}
