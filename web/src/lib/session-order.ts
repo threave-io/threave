@@ -1,17 +1,21 @@
 import type { AgentEvent, Session } from '@/lib/api'
+import { isTerminalEvent } from '@/lib/events'
+import { latestSessionSeq } from '@/lib/session-attention'
 
 export function sessionActivityTime(session: Session): number {
   return Date.parse(session.last_activity_at ?? session.created_at) || 0
 }
 
 export function applySessionActivity(session: Session, event: AgentEvent): Session {
-  if (!/^(user\.|agent\.|tool\.|file\.change\.)/.test(event.type)) return session
+  if (!isTerminalEvent(event.type)) return session
   if (Date.parse(event.created_at) <= sessionActivityTime(session)) return session
   return { ...session, last_activity_at: event.created_at }
 }
 
 export function preserveSessionActivity(incoming: Session, existing?: Session): Session {
-  return existing?.last_activity_at && sessionActivityTime(existing) > sessionActivityTime(incoming)
+  // An equally recent server snapshot is authoritative, including corrected activity timestamps.
+  return existing?.last_activity_at && latestSessionSeq(existing) > latestSessionSeq(incoming)
+    && sessionActivityTime(existing) > sessionActivityTime(incoming)
     ? { ...incoming, last_activity_at: existing.last_activity_at }
     : incoming
 }

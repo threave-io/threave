@@ -27,14 +27,19 @@ import (
 	"github.com/threave-io/threave/internal/store"
 )
 
-func TestSessionReadsExposeWorkAndStreamingActivityWithoutChangingIt(t *testing.T) {
+func TestSessionReadsExposeOnlyFinishedTurnActivity(t *testing.T) {
 	ctx := context.Background()
 	database, events, _, handler := newIntegrationAPI(t, ctx, fake.New())
 	session, err := database.CreateSession(ctx, store.CreateSessionParams{Title: "Activity", AgentType: "fake"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, eventType := range []string{"user.message.completed", "agent.message.delta"} {
+	var want *string
+	var lastSeq int64
+	for _, eventType := range []string{
+		"user.message.completed", "agent.message.delta", "agent.message.completed", "agent.run.completed",
+		"agent.run.started", "agent.message.delta", "tool.call.completed", "agent.run.failed", "agent.run.cancelled",
+	} {
 		event, err := events.Append(ctx, eventservice.AppendParams{
 			SessionID: session.ID, Type: eventType, Role: "assistant", Status: store.EventStatusCompleted,
 			Payload: json.RawMessage(`{"text":"Work"}`),
@@ -42,7 +47,14 @@ func TestSessionReadsExposeWorkAndStreamingActivityWithoutChangingIt(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := event.CreatedAt.UTC().Format(time.RFC3339Nano)
+		if eventType != "agent.message.delta" {
+			lastSeq = event.Seq
+		}
+		switch eventType {
+		case "agent.run.completed", "agent.run.failed", "agent.run.cancelled":
+			formatted := event.CreatedAt.UTC().Format(time.RFC3339Nano)
+			want = &formatted
+		}
 		for _, read := range []*httptest.ResponseRecorder{
 			get(handler, "/api/sessions/"+session.ID),
 			postJSON(handler, "/api/sessions/"+session.ID+"/notification-attention/clear", `{}`),
@@ -52,11 +64,11 @@ func TestSessionReadsExposeWorkAndStreamingActivityWithoutChangingIt(t *testing.
 			}
 			var response sessionResponse
 			decodeJSON(t, read, &response)
-			if response.LastActivityAt == nil || *response.LastActivityAt != want {
-				t.Fatalf("expected event activity %s, got %v", want, response.LastActivityAt)
+			if !reflect.DeepEqual(response.LastActivityAt, want) {
+				t.Fatalf("%s: expected finished turn activity %v, got %v", eventType, want, response.LastActivityAt)
 			}
-			if response.LastEventSeq != 1 {
-				t.Fatalf("streamed activity changed durable cursor: %d", response.LastEventSeq)
+			if response.LastEventSeq != lastSeq {
+				t.Fatalf("%s: expected durable cursor %d, got %d", eventType, lastSeq, response.LastEventSeq)
 			}
 		}
 	}

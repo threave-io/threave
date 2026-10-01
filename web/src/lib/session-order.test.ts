@@ -38,7 +38,7 @@ test('groups use the latest activity from any descendant, including nested group
   expect(sorted.indexOf(child)).toBeLessThan(sorted.indexOf(sibling))
 })
 
-test.each(['user.message.completed', 'agent.message.completed', 'agent.input.answered', 'tool.call.started', 'file.change.completed'])(
+test.each(['agent.run.completed', 'agent.run.failed', 'agent.run.cancelled'])(
   '%s advances activity without changing the metadata timestamp', (type) => {
     const original = session('a', 1)
     const updated = applySessionEvent(original, event(type), null)
@@ -47,26 +47,31 @@ test.each(['user.message.completed', 'agent.message.completed', 'agent.input.ans
   },
 )
 
-test.each(['session.status.updated', 'session.pin.updated', 'session.agent_options.updated', 'provider.codex.event'])(
-  '%s does not count as user or agent activity', (type) => {
+test.each([
+  'user.message.completed', 'agent.run.started', 'agent.message.completed', 'agent.input.answered',
+  'agent.thinking.completed', 'agent.plan.completed', 'tool.call.started', 'tool.call.completed',
+  'file.change.completed', 'session.status.updated', 'session.pin.updated',
+  'session.agent_options.updated', 'provider.codex.event',
+])(
+  '%s does not change ordering during a turn', (type) => {
     const original = session('a', 1)
     expect(applySessionEvent(original, event(type), null).last_activity_at).toBe(original.last_activity_at)
   },
 )
 
-test('streaming advances activity without consuming the durable event sequence or counters', () => {
+test('streaming leaves ordering and durable event sequence and counters unchanged', () => {
   const original = session('a', 1)
   const delta = event('agent.message.delta')
   const streaming = applySessionEvent(original, delta, null)
-  expect(streaming.last_activity_at).toBe(delta.created_at)
+  expect(streaming.last_activity_at).toBe(original.last_activity_at)
   expect(streaming.last_event_seq).toBeUndefined()
   expect(streaming.event_count).toBe(0)
-  expect(applySessionEvent(streaming, event('agent.message.completed', 11), null).last_event_seq).toBe(1)
+  expect(applySessionEvent(streaming, event('agent.run.completed', 11), null).last_event_seq).toBe(1)
 })
 
-test('old replay and fresh metadata snapshots cannot move activity backwards', () => {
-  const recent = session('a', 10)
-  expect(applySessionEvent(recent, event('agent.message.completed', 2), null).last_activity_at).toBe(recent.last_activity_at)
+test('old replay and stale server snapshots cannot move activity backwards', () => {
+  const recent = { ...session('a', 10), last_event_seq: 2 }
+  expect(applySessionEvent(recent, event('agent.run.completed', 2), null).last_activity_at).toBe(recent.last_activity_at)
   const incoming = { ...session('a', 1), title: 'Refreshed title' }
   expect(preserveSessionActivity(incoming, recent)).toMatchObject({ title: incoming.title, last_activity_at: recent.last_activity_at })
 })
@@ -74,4 +79,10 @@ test('old replay and fresh metadata snapshots cannot move activity backwards', (
 test('sessions without activity use creation time, never their settings update time', () => {
   const empty = { ...session('empty', 0), last_activity_at: null, created_at: '2026-06-12T16:02:00Z' }
   expect(sortSessions([empty, session('active', 1)]).map((s) => s.id)).toEqual(['empty', 'active'])
+})
+
+test('current server snapshots can correct activity from the previous ordering rule', () => {
+  const cached = { ...session('a', 10), last_event_seq: 2 }
+  const incoming = { ...session('a', 1), last_event_seq: 2 }
+  expect(preserveSessionActivity(incoming, cached)).toBe(incoming)
 })

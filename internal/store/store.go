@@ -870,10 +870,9 @@ func insertEventBlob(ctx context.Context, tx *sql.Tx, blob EventBlob) error {
 	return nil
 }
 
-// IsSessionActivityEventType excludes session metadata and provider debug traffic.
+// IsSessionActivityEventType advances session ordering only when an agent turn ends.
 func IsSessionActivityEventType(eventType string) bool {
-	return strings.HasPrefix(eventType, "user.") || strings.HasPrefix(eventType, "agent.") ||
-		strings.HasPrefix(eventType, "tool.") || strings.HasPrefix(eventType, "file.change.")
+	return eventType == "agent.run.completed" || eventType == "agent.run.failed" || eventType == "agent.run.cancelled"
 }
 
 func updateSessionEventSummary(ctx context.Context, tx *sql.Tx, event Event, sessionTotalTokens *int64) error {

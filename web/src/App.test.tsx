@@ -2030,7 +2030,7 @@ test('global activity stream marks another session pending input', async () => {
   await waitFor(() => expect(faviconPath()).toBe('/favicon-notify.svg'))
 })
 
-test('real streamed activity reorders sessions while clicking and metadata refreshes do not', async () => {
+test('session order stays stable during a turn and updates when it finishes', async () => {
   const user = userEvent.setup()
   const fetch = fetchMock({ sessions: [firstSession, { ...secondSession, updated_at: '2026-06-12T19:00:00Z' }] })
   vi.stubGlobal('fetch', fetch)
@@ -2045,9 +2045,18 @@ test('real streamed activity reorders sessions while clicking and metadata refre
   act(() => {
     source.emit({ ...event(1, 'agent.message.delta', { text: 'Working' }, 'sess_2'), created_at: '2026-06-12T16:03:00Z', transient: true })
   })
+  expect(rowIDs()).toEqual(['sess_1', 'sess_2'])
+  act(() => {
+    source.emit({ ...event(1, 'agent.message.completed', { text: 'Progress' }, 'sess_2'), created_at: '2026-06-12T16:04:00Z' })
+    source.emit({ ...event(2, 'tool.call.completed', {}, 'sess_2'), created_at: '2026-06-12T16:05:00Z' })
+  })
+  expect(rowIDs()).toEqual(['sess_1', 'sess_2'])
+  act(() => {
+    source.emit({ ...event(3, 'agent.run.completed', {}, 'sess_2'), created_at: '2026-06-12T16:06:00Z' })
+  })
   await waitFor(() => expect(rowIDs()).toEqual(['sess_2', 'sess_1']))
 
-  // Opening the active session fetches an older durable snapshot; keep its streamed activity.
+  // Opening the finished session fetches an older durable snapshot; keep its turn activity.
   await user.click(screen.getByRole('button', { name: secondSession.title }))
   await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/sessions/sess_2/notification-attention/clear', expect.anything()))
   expect(rowIDs()).toEqual(['sess_2', 'sess_1'])

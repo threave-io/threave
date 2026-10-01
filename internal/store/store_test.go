@@ -139,8 +139,8 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 26 {
-		t.Fatalf("expected twenty-six recorded migrations, got %d", count)
+	if count != 27 {
+		t.Fatalf("expected twenty-seven recorded migrations, got %d", count)
 	}
 }
 
@@ -961,7 +961,7 @@ func TestManualQueuedMessageClaimsBeforeScheduledOccurrence(t *testing.T) {
 	}
 }
 
-func TestListSessionsReturnsMostRecentActivityFirst(t *testing.T) {
+func TestListSessionsReturnsMostRecentFinishedTurnFirst(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t, ctx)
 
@@ -983,12 +983,24 @@ func TestListSessionsReturnsMostRecentActivityFirst(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append first session activity: %v", err)
 	}
+	sessions, err := store.ListSessions(ctx, ListSessionsParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSessionIDs(t, sessions, []string{third.ID, second.ID, first.ID})
 	store.now = func() time.Time { return updatedAt.Add(time.Minute) }
+	if _, err := store.AppendEvent(ctx, AppendEventParams{
+		SessionID: first.ID, Type: "agent.run.completed", Role: "assistant",
+		Status: EventStatusCompleted, Payload: json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return updatedAt.Add(2 * time.Minute) }
 	if _, err := store.UpdateSessionTitle(ctx, UpdateSessionTitleParams{ID: second.ID, Title: "Renamed"}); err != nil {
 		t.Fatal(err)
 	}
 
-	sessions, err := store.ListSessions(ctx, ListSessionsParams{})
+	sessions, err = store.ListSessions(ctx, ListSessionsParams{})
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
