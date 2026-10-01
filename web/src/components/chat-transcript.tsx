@@ -1076,41 +1076,6 @@ function ChatMessageRow({
   return (
     <article className={cn('flex', user ? 'justify-end' : 'justify-start')} data-message-variant={message.variant}>
       <div className="relative inline-block max-w-full sm:max-w-[min(48rem,90%)]">
-        {timestamp ? (
-          <div className="flex h-4 items-center justify-end gap-0.5 px-1 text-[10px] leading-none text-muted-foreground/55">
-            {turnDuration ? (
-              <>
-                <span className="tabular-nums" aria-label={`Total turn time ${turnDuration}`}>
-                  {turnDuration}
-                </span>
-                <span aria-hidden="true">·</span>
-              </>
-            ) : null}
-            <time className="font-normal tabular-nums" dateTime={timestampValue}>
-              {timestamp}
-            </time>
-            {messageCopyFailed ? (
-              <span role="alert" title={clipboardCopyErrorMessage} className="ml-1 whitespace-nowrap text-destructive">
-                Copy failed
-              </span>
-            ) : null}
-            {showMessageCopy ? (
-              <button
-                type="button"
-                aria-label="Copy message"
-                title={messageCopied ? 'Copied' : 'Copy message'}
-                onClick={() => void handleMessageCopy()}
-                className="inline-flex size-4 items-center justify-center rounded text-muted-foreground/45 transition-colors hover:bg-muted/55 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {messageCopied ? (
-                  <Check className="size-3" aria-hidden="true" />
-                ) : (
-                  <Copy className="size-3" aria-hidden="true" />
-                )}
-              </button>
-            ) : null}
-          </div>
-        ) : null}
         <div
           className={cn(
             'rounded-lg px-3.5 py-3 text-sm shadow-sm',
@@ -1147,6 +1112,42 @@ function ChatMessageRow({
             <p className="text-muted-foreground">Working...</p>
           )}
         </div>
+
+        {timestamp ? (
+          <div className="mt-0.5 flex min-h-4 flex-wrap items-center justify-end gap-0.5 px-1 text-[10px] leading-none text-muted-foreground/55">
+            {turnDuration ? (
+              <>
+                <span className="tabular-nums" aria-label={`Total turn time ${turnDuration}`}>
+                  {turnDuration}
+                </span>
+                <span aria-hidden="true">·</span>
+              </>
+            ) : null}
+            <time className="font-normal tabular-nums" dateTime={timestampValue}>
+              {timestamp}
+            </time>
+            {messageCopyFailed ? (
+              <span role="alert" title={clipboardCopyErrorMessage} className="ml-1 whitespace-nowrap text-destructive">
+                Copy failed
+              </span>
+            ) : null}
+            {showMessageCopy ? (
+              <button
+                type="button"
+                aria-label="Copy message"
+                title={messageCopied ? 'Copied' : 'Copy message'}
+                onClick={() => void handleMessageCopy()}
+                className="inline-flex size-4 items-center justify-center rounded text-muted-foreground/45 transition-colors hover:bg-muted/55 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {messageCopied ? (
+                  <Check className="size-3" aria-hidden="true" />
+                ) : (
+                  <Copy className="size-3" aria-hidden="true" />
+                )}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {message.tools.length > 0 ? (
           <div

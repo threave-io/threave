@@ -45,9 +45,10 @@ test('renders user and assistant messages without duplicating completion text', 
   expect(container.querySelectorAll('time[datetime="2026-06-12T16:00:00Z"]')).toHaveLength(2)
   const firstTimestamp = container.querySelector('time[datetime="2026-06-12T16:00:00Z"]')
   expect(firstTimestamp).toBeVisible()
+  expect(firstTimestamp?.parentElement?.previousElementSibling).toContainElement(screen.getByText('Hello'))
   const timestampPosition = firstTimestamp?.compareDocumentPosition(screen.getByText('Hello')) ?? 0
-  expect(timestampPosition & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-    Node.DOCUMENT_POSITION_FOLLOWING,
+  expect(timestampPosition & Node.DOCUMENT_POSITION_PRECEDING).toBe(
+    Node.DOCUMENT_POSITION_PRECEDING,
   )
   expect(screen.getAllByRole('button', { name: 'Copy message' })).toHaveLength(2)
 })
