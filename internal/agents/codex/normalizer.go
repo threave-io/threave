@@ -143,6 +143,9 @@ func (n *normalizer) normalizeItemLifecycle(method string, params json.RawMessag
 			copyItemFields(payload, item)
 			canonicalizeToolItem(payload, item)
 			return []normalizedEvent{{Event: event("tool.call.started", "assistant", "started", payload)}}
+		case "imageGeneration":
+			payload["tool"] = "Generate image"
+			return []normalizedEvent{{Event: event("tool.call.started", "assistant", "started", payload)}}
 		case "fileChange":
 			copyItemFields(payload, item)
 			payload["paths"] = changePaths(item["changes"])
@@ -175,6 +178,22 @@ func (n *normalizer) normalizeItemLifecycle(method string, params json.RawMessag
 	case "commandExecution", "mcpToolCall", "dynamicToolCall", "webSearch", "collabAgentToolCall":
 		canonicalizeToolItem(payload, item)
 		return []normalizedEvent{{Event: event("tool.call.completed", "assistant", eventStatusFromItem(item), payload)}}
+	case "imageGeneration":
+		// Use the same binary content contract as other tools so persistence
+		// externalizes the image and replay only carries its metadata.
+		payload["tool"] = "Generate image"
+		delete(payload, "result")
+		if data := stringFromMap(item, "result"); data != "" {
+			payload["result"] = map[string]any{"content": []any{map[string]any{
+				"type": "image", "mimeType": "image/png", "data": data, "name": "Generated image.png",
+			}}}
+		}
+		status := eventStatusFromItem(item)
+		if failure := item["failure"]; failure != nil {
+			status = "failed"
+			payload["error"] = firstNonEmpty(toolErrorMessage(failure), "Image generation failed")
+		}
+		return []normalizedEvent{{Event: event("tool.call.completed", "assistant", status, payload)}}
 	case "fileChange":
 		payload["paths"] = changePaths(item["changes"])
 		return []normalizedEvent{{Event: event("file.change.completed", "assistant", eventStatusFromItem(item), payload)}}

@@ -1723,6 +1723,28 @@ test('expands historical nested MCP tool output', async () => {
   expect(screen.getByText(/go test \.\/\.\.\.\s+ok/)).toBeInTheDocument()
 })
 
+test('shows generated images inline while tools are collapsed and opens full preview', async () => {
+  const user = userEvent.setup()
+  const imageEvent = event(2, 'tool.call.completed', 'assistant', 'completed', {
+    item_id: 'image_1', item_type: 'imageGeneration', tool: 'Generate image',
+    result: { content: [{ type: 'image', data: '', mimeType: 'image/png', name: 'Generated image.png', _gorchestra_blob: true }] },
+  })
+  const followingTools = [3, 4, 5, 6].map((seq) => event(seq, 'tool.call.completed', 'assistant', 'completed', {
+    item_id: `tool_${seq}`, tool: `tool_${seq}`,
+  }))
+  render(<ChatTranscript events={[
+    event(1, 'agent.message.completed', 'assistant', 'completed', { text: 'Making an infographic.' }),
+    imageEvent, ...followingTools,
+  ]} />)
+
+  const preview = screen.getByRole('button', { name: 'Preview Generated image.png' })
+  expect(preview.querySelector('img')).toHaveAttribute('src', '/api/sessions/sess_1/events/2/tool-content/0')
+  expect(screen.queryByRole('button', { name: 'Generate image' })).not.toBeInTheDocument()
+  await user.click(preview)
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute('href', '/api/sessions/sess_1/events/2/tool-content/0')
+})
+
 test('renders MCP media and resource result blocks', async () => {
   const user = userEvent.setup()
 

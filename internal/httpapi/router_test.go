@@ -1042,6 +1042,45 @@ func TestEventToolContentServesBinaryResultBlocks(t *testing.T) {
 	}
 }
 
+func TestGeneratedImageHistoryUsesCompactMetadataAndServesStoredPNG(t *testing.T) {
+	ctx := context.Background()
+	dbStore, err := store.Open(ctx, filepath.Join(t.TempDir(), "images.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = dbStore.Close() })
+	session, err := dbStore.CreateSession(ctx, store.CreateSessionParams{AgentType: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := bytes.Repeat([]byte{0x89, 0x50, 0x4e, 0x47}, 10000)
+	payload, _ := json.Marshal(map[string]any{
+		"item_type": "imageGeneration", "tool": "Generate image",
+		"result": map[string]any{"content": []any{map[string]any{
+			"type": "image", "mimeType": "image/png", "name": "Generated image.png", "data": base64.StdEncoding.EncodeToString(image),
+		}}},
+	})
+	event, err := dbStore.AppendEvent(ctx, store.AppendEventParams{
+		SessionID: session.ID, Type: "tool.call.completed", Role: "assistant", Status: store.EventStatusCompleted, Payload: payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(Dependencies{Store: dbStore})
+	history := httptest.NewRecorder()
+	router.ServeHTTP(history, httptest.NewRequest(http.MethodGet, "/api/sessions/"+session.ID+"/events?tail=true", nil))
+	var response eventHistoryResponse
+	decodeJSON(t, history, &response)
+	if len(response.Events) != 1 || response.Events[0].Type != "tool.call.completed" || history.Body.Len() > 2000 {
+		t.Fatalf("expected visible compact image event, got %d events and %d bytes", len(response.Events), history.Body.Len())
+	}
+	imageResponse := httptest.NewRecorder()
+	router.ServeHTTP(imageResponse, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/sessions/%s/events/%d/tool-content/0", session.ID, event.Seq), nil))
+	if imageResponse.Code != http.StatusOK || imageResponse.Header().Get("Content-Type") != "image/png" || !bytes.Equal(imageResponse.Body.Bytes(), image) {
+		t.Fatalf("expected original PNG, got HTTP %d with %d bytes", imageResponse.Code, imageResponse.Body.Len())
+	}
+}
+
 func TestEventToolOutputServesExternalizedStoreBlob(t *testing.T) {
 	ctx := context.Background()
 	dbStore, err := store.Open(ctx, filepath.Join(t.TempDir(), "events.db"))

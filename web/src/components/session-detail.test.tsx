@@ -119,6 +119,33 @@ test('reload restores an unacknowledged request; safe retry preserves its exact 
   await waitFor(async () => expect(await readPendingSubmissions(baseSession.id)).toEqual([]))
 })
 
+test('a confirmed unsent message can be dismissed without losing the current draft', async () => {
+  await savePendingSubmission({ id: 'unsent-id', sessionID: baseSession.id, content: 'Old unsent message', attachments: [], skills: [], queue: false, createdAt: new Date().toISOString() })
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ messages: [], state: 'not_received' })))
+  const onSubmitPrompt = vi.fn(async () => undefined)
+  renderDetail({ onSubmitPrompt })
+  const prompt = screen.getByLabelText('Prompt')
+  fireEvent.change(prompt, { target: { value: 'My new draft' } })
+  expect(screen.getByRole('button', { name: 'Submit prompt' })).toBeDisabled()
+  fireEvent.click(await screen.findByRole('button', { name: 'Dismiss unsent message' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Submit prompt' })).toBeEnabled())
+  expect(prompt).toHaveValue('My new draft')
+  expect(await readPendingSubmissions(baseSession.id)).toEqual([])
+  expect(onSubmitPrompt).not.toHaveBeenCalled()
+})
+
+test('uncertain messages cannot be dismissed or retried as new work', async () => {
+  await savePendingSubmission({ id: 'unknown-id', sessionID: baseSession.id, content: 'Uncertain message', attachments: [], skills: [], queue: false, createdAt: new Date().toISOString() })
+  const onSubmitPrompt = vi.fn(async () => undefined)
+  renderDetail({ onSubmitPrompt })
+  await screen.findByRole('region', { name: 'Pending message recovery' })
+  fireEvent.click(screen.getByRole('button', { name: 'Retry safely' }))
+  await screen.findByText(/Delivery is still uncertain/)
+  expect(screen.queryByRole('button', { name: /Dismiss/ })).not.toBeInTheDocument()
+  expect(onSubmitPrompt).not.toHaveBeenCalled()
+  expect(await readPendingSubmissions(baseSession.id)).toHaveLength(1)
+})
+
 test('Send now persists its target and recovers without changing a failed steer into a new turn', async () => {
   const events = [event(1, 'agent.run.started', { run_id: 'run1' }), event(2, 'agent.thinking.started', { run_id: 'run1' })]
   const onSubmitPrompt = vi.fn(async () => { throw new Error('Lost connection') })

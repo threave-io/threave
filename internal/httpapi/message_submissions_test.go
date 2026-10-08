@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,9 +10,77 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/threave-io/threave/internal/agents"
 	"github.com/threave-io/threave/internal/agents/fake"
+	eventservice "github.com/threave-io/threave/internal/events"
 	"github.com/threave-io/threave/internal/store"
 )
+
+type failUserMessageEvents struct{ EventService }
+
+func (service failUserMessageEvents) Append(ctx context.Context, params eventservice.AppendParams) (store.Event, error) {
+	if params.Type == "user.message.completed" {
+		return store.Event{}, errors.New("message persistence failed")
+	}
+	return service.EventService.Append(ctx, params)
+}
+
+func TestFailedMessagePersistenceCanBeRetriedWithoutDuplicateRuns(t *testing.T) {
+	ctx := context.Background()
+	agent := newBlockingAgent()
+	db, events, runs, handler := newIntegrationAPI(t, ctx, agent)
+	session := createIntegrationSession(t, ctx, db)
+	registry, err := agents.NewRegistry(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedHandler := NewRouter(Dependencies{Store: db, Events: failUserMessageEvents{events}, Agents: registry, Runs: runs})
+	path := "/api/sessions/" + session.ID + "/messages"
+	body := `{"content":"Retry this message","client_submission_id":"retry-1"}`
+	response := postJSON(failedHandler, path, body)
+	if response.Code != 500 || runs.Active(session.ID) {
+		t.Fatalf("persistence failure must not launch work: HTTP %d", response.Code)
+	}
+	status := httptest.NewRecorder()
+	handler.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/sessions/"+session.ID+"/submissions/retry-1", nil))
+	var receipt store.MessageSubmission
+	decodeJSON(t, status, &receipt)
+	if receipt.State != "not_received" {
+		t.Fatalf("completed persistence failure must allow safe retry: %#v", receipt)
+	}
+	defer func() {
+		agent.release()
+		waitFor(t, func() bool {
+			s, err := db.GetSession(ctx, session.ID)
+			return err == nil && s.Status == store.SessionStatusIdle
+		})
+	}()
+	var group sync.WaitGroup
+	results := make(chan int, 12)
+	for range 12 {
+		group.Add(1)
+		go func() { defer group.Done(); results <- postJSON(handler, path, body).Code }()
+	}
+	group.Wait()
+	close(results)
+	for status := range results {
+		if status != 202 && status != 409 {
+			t.Fatalf("retry returned HTTP %d", status)
+		}
+	}
+	messages := 0
+	for _, event := range listIntegrationEvents(t, ctx, db, session.ID) {
+		if event.Type == "user.message.completed" {
+			messages++
+		}
+	}
+	if messages != 1 {
+		t.Fatalf("expected exactly one message after retry, got %d", messages)
+	}
+	if queued, err := db.ListQueuedMessages(ctx, session.ID); err != nil || len(queued) != 0 {
+		t.Fatalf("retry must not create duplicate queued work: %#v (%v)", queued, err)
+	}
+}
 
 func TestConcurrentSubmissionIdentityStartsOnlyOneRun(t *testing.T) {
 	ctx := context.Background()

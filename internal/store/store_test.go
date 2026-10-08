@@ -139,8 +139,12 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 27 {
-		t.Fatalf("expected twenty-seven recorded migrations, got %d", count)
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != len(migrations) {
+		t.Fatalf("expected %d recorded migrations, got %d", len(migrations), count)
 	}
 }
 

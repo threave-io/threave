@@ -1053,6 +1053,7 @@ function ChatMessageRow({
   const turnDuration = formatTurnDuration(message.durationMs)
   const showMessageCopy = Boolean(message.text)
   const focusedTool = message.tools.find((tool) => focusSeq >= tool.startSeq && focusSeq <= tool.endSeq)
+  const images = message.tools.flatMap((tool) => tool.content.filter((content) => content.kind === 'image'))
 
   useEffect(() => {
     if (focusedTool) setShowAllTools(true)
@@ -1181,6 +1182,7 @@ function ChatMessageRow({
             ))}
           </div>
         ) : null}
+        {images.length > 0 ? <ToolResultContent content={images} className="mt-2" largeImages /> : null}
       </div>
     </article>
   )
@@ -1212,7 +1214,7 @@ function MessageAttachments({ attachments }: { attachments: ChatTranscriptAttach
   )
 }
 
-function ImageAttachmentPreview({ attachment }: { attachment: ChatTranscriptAttachment }) {
+function ImageAttachmentPreview({ attachment, large = false }: { attachment: ChatTranscriptAttachment; large?: boolean }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
@@ -1221,7 +1223,11 @@ function ImageAttachmentPreview({ attachment }: { attachment: ChatTranscriptAtta
           className="block overflow-hidden rounded-md border border-border/70 bg-background/80 transition-colors hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`Preview ${attachment.name}`}
         >
-          <img src={attachment.sourceURL} alt={attachment.name} className="h-24 w-24 object-cover" />
+          <img
+            src={attachment.sourceURL}
+            alt={attachment.name}
+            className={large ? 'max-h-96 max-w-full object-contain' : 'h-24 w-24 object-cover'}
+          />
         </button>
       </DialogTrigger>
       <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] gap-4 overflow-hidden p-4 sm:max-w-5xl">
@@ -1659,7 +1665,8 @@ function ToolCallRow({
   const [loadingFullOutput, setLoadingFullOutput] = useState(false)
   const [fullOutputError, setFullOutputError] = useState('')
   const output = loadedOutput || tool.error || tool.text
-  const hasDetails = Boolean(output || tool.content.length > 0 || tool.fullOutputURL)
+  const detailContent = tool.content.filter((content) => content.kind !== 'image')
+  const hasDetails = Boolean(output || detailContent.length > 0 || tool.fullOutputURL)
   const [outputOpen, setOutputOpen] = useState(false)
   const name = tool.label.replace(/^Tool:\s*/, '')
   const statusDotClassName = toolStatusDotClassName(tool)
@@ -1745,8 +1752,8 @@ function ToolCallRow({
               </button>
             ) : null}
             {fullOutputError ? <p className="mt-1 text-[11px] text-destructive">{fullOutputError}</p> : null}
-            {tool.content.length > 0 ? (
-              <ToolResultContent content={tool.content} className={output ? 'mt-2' : ''} />
+            {detailContent.length > 0 ? (
+              <ToolResultContent content={detailContent} className={output ? 'mt-2' : ''} />
             ) : null}
           </div>
         ) : null
@@ -1755,7 +1762,11 @@ function ToolCallRow({
   )
 }
 
-function ToolResultContent({ content, className }: { content: ChatTranscriptToolContent[]; className?: string }) {
+function ToolResultContent({ content, className, largeImages = false }: {
+  content: ChatTranscriptToolContent[]
+  className?: string
+  largeImages?: boolean
+}) {
   return (
     <div className={cn('flex flex-wrap gap-2', className)}>
       {content.map((item, index) => {
@@ -1763,6 +1774,7 @@ function ToolResultContent({ content, className }: { content: ChatTranscriptTool
           return (
             <ImageAttachmentPreview
               key={`${item.kind}-${item.sourceURL}-${index}`}
+              large={largeImages}
               attachment={{
                 name: item.name,
                 mediaType: item.mediaType,

@@ -1780,7 +1780,7 @@ function toolContentBlock(
     }
     return {
       kind: type,
-      name: `${type} result`,
+      name: payloadString(value, ['name']) || `${type} result`,
       mediaType,
       sourceURL: toolContentSourceURL(event, contentIndex),
       uri: '',

@@ -32,7 +32,7 @@ import {
 import { cn } from '@/lib/utils'
 import { getMessageSubmissionStatus } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { pendingSubmissionsChanged, readPendingSubmissions, removePendingSubmission, savePendingSubmission, type PendingSubmission } from '@/lib/pending-submissions'
+import { pendingSubmissionsChanged, readPendingSubmissions, removePendingSubmission, savePendingSubmission, type PendingSubmission, type SubmissionStatus } from '@/lib/pending-submissions'
 
 type Props = {
   session: Session | null
@@ -131,7 +131,7 @@ export function SessionDetail({
   const [pendingError, setPendingError] = useState('')
   const [checkingSubmission, setCheckingSubmission] = useState(false)
   const [sendingSubmissionID, setSendingSubmissionID] = useState<string | null>(null)
-  const [rejectedSubmissionIDs, setRejectedSubmissionIDs] = useState<Set<string>>(new Set())
+  const [submissionStates, setSubmissionStates] = useState<Record<string, SubmissionStatus['state']>>({})
   const submitInFlightRef = useRef(false)
   const statusEvents = useMemo(() => offline ? [] : (liveEvents ?? events), [events, liveEvents, offline])
   const persistedClientSubmissionIDs = useMemo(() => clientSubmissionIDs(events), [events])
@@ -182,6 +182,7 @@ export function SessionDetail({
     setPendingLoaded(false)
     setPendingSubmissions([])
     setPendingError('')
+    setSubmissionStates({})
     const sessionID = session?.id
     if (!sessionID) return
     async function refresh() {
@@ -211,15 +212,17 @@ export function SessionDetail({
   }, [events, liveEvents, pendingSubmissions])
 
   useEffect(() => {
-    if (offline || submitInFlightRef.current) return
+    if (offline || submitInFlightRef.current || checkingSubmission) return
     let closed = false
     for (const pending of pendingSubmissions) {
       void getMessageSubmissionStatus(pending.sessionID, pending.id).then(async (status) => {
-        if (!closed && status.state === 'accepted') await removePendingSubmission(pending.id)
+        if (closed) return
+        if (status.state === 'accepted') await removePendingSubmission(pending.id)
+        else setSubmissionStates((current) => ({ ...current, [pending.id]: status.state }))
       }).catch(() => { /* Keep the durable record and explicit Check delivery action. */ })
     }
     return () => { closed = true }
-  }, [offline, pendingSubmissions])
+  }, [offline, pendingSubmissions, checkingSubmission])
 
   useEffect(() => {
     setOptimisticUserMessages([])
@@ -315,15 +318,16 @@ export function SessionDetail({
     setPendingError('')
     try {
       const status = await getMessageSubmissionStatus(pending.sessionID, pending.id)
+      setSubmissionStates((current) => ({ ...current, [pending.id]: status.state }))
       if (status.state === 'accepted') {
         await removePendingSubmission(pending.id)
       } else if (status.state === 'not_received' && retry) {
+        setSubmissionStates((current) => ({ ...current, [pending.id]: 'unknown' }))
         await onSubmitPrompt(pending.content, pending.options, pending.attachments, pending.queue, pending.skills, pending.id, ...(pending.steerRunID ? [pending.steerRunID] : []))
         await removePendingSubmission(pending.id)
       } else {
-        if (status.state === 'rejected') setRejectedSubmissionIDs((current) => new Set([...current, pending.id]))
         setPendingError(status.state === 'not_received'
-          ? 'The server has not received this message. Retry safely uses the same submission ID.'
+          ? 'The server has not received this message. Retry safely resends it, or dismiss it to send a different message.'
           : status.state === 'rejected'
             ? 'The server rejected this message. Copy the text below, then dismiss this record to edit and send a new message.'
             : 'Delivery is still uncertain. Your message is preserved; check history before taking further action.')
@@ -491,13 +495,14 @@ export function SessionDetail({
               {recoverableSubmissions.map((pending) => (
                 <div key={pending.id} className="mt-2">
                   <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words">{pending.content}</pre>
+                  {submissionStates[pending.id] === 'not_received' ? <p className="mt-1 text-muted-foreground">The server has not received this message. You can retry it or dismiss it to send another message.</p> : null}
                   {pending.attachments.length > 0 ? <p>{pending.attachments.length} image attachment(s) preserved</p> : null}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" disabled={offline || checkingSubmission} onClick={() => void checkSubmission(pending)}>Check delivery</Button>
                     <Button size="sm" variant="outline" disabled={offline || checkingSubmission} onClick={() => void checkSubmission(pending, true)}>Retry safely</Button>
-                    {rejectedSubmissionIDs.has(pending.id) ? <Button size="sm" variant="outline" onClick={() => {
-                      void removePendingSubmission(pending.id).then(() => setPendingError('')).catch(() => setPendingError('Unable to clear the rejected record.'))
-                    }}>Dismiss rejected message</Button> : null}
+                    {['rejected', 'not_received'].includes(submissionStates[pending.id]) ? <Button size="sm" variant="outline" disabled={checkingSubmission} onClick={() => {
+                      void removePendingSubmission(pending.id).then(() => setPendingError('')).catch(() => setPendingError('Unable to clear the pending record.'))
+                    }}>{submissionStates[pending.id] === 'rejected' ? 'Dismiss rejected message' : 'Dismiss unsent message'}</Button> : null}
                   </div>
                 </div>
               ))}
