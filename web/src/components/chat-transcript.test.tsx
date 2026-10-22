@@ -223,6 +223,64 @@ test('renders markdown in chat messages', () => {
   expect(screen.getByText('First item')).toBeInTheDocument()
 })
 
+describe('Mermaid message diagrams', () => {
+  beforeEach(() => {
+    // jsdom has no canvas; Pele's built-in text measurer is sufficient here.
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+  })
+
+  afterEach(() => vi.restoreAllMocks())
+
+  test.each(['user', 'assistant'] as const)('renders %s diagrams and retains copyable source', async (role) => {
+    const source = 'flowchart LR\n  Draft --> Review'
+    render(<ChatTranscript events={[
+      event(1, role === 'user' ? 'user.message.completed' : 'agent.message.completed', role, 'completed', {
+        text: `Here is the flow:\n\n\`\`\`mermaid\n${source}\n\`\`\`\n\n\`\`\`ts\nconst value = 1\n\`\`\``,
+      }),
+    ]} />)
+
+    const diagram = await screen.findByRole('region', { name: 'Mermaid diagram' })
+    await waitFor(() => expect(diagram.querySelector('svg')).toBeInTheDocument())
+    expect(diagram).toHaveTextContent('Draft')
+    expect(diagram).toHaveTextContent('Review')
+    const sourceToggle = screen.getByText('Diagram source')
+    fireEvent.click(sourceToggle)
+    expect(screen.getByText(/^flowchart LR/, { selector: 'code' })).toBeVisible()
+    expect(screen.getByText(/^flowchart LR/, { selector: 'code' }).textContent).toBe(`${source}\n`)
+    expect(screen.getAllByRole('button', { name: 'Copy code' })).toHaveLength(2)
+    expect(screen.getByText('const value = 1')).toBeVisible()
+  })
+
+  test('shows invalid source and recovers when a streamed diagram becomes valid', async () => {
+    const delta = event(1, 'agent.message.delta', 'assistant', 'delta', {
+      item_id: 'diagram', text: '```mermaid\nflowchart TD\n  A[',
+    })
+    const { rerender } = render(<ChatTranscript events={[delta]} />)
+    expect(await screen.findByText(/Unable to render Mermaid diagram:/)).toBeVisible()
+    expect(screen.getByText(/^flowchart TD/, { selector: 'code' })).toBeVisible()
+
+    rerender(<ChatTranscript events={[delta, event(2, 'agent.message.completed', 'assistant', 'completed', {
+      item_id: 'diagram', text: '```mermaid\nflowchart TD\n  A[Ready] --> B[Done]\n```',
+    })]} />)
+
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Mermaid diagram' }).querySelector('svg')).toBeInTheDocument())
+    expect(screen.queryByText(/Unable to render Mermaid diagram:/)).not.toBeInTheDocument()
+  })
+
+  test('keeps diagram IDs unique and disables diagram links', async () => {
+    const source = 'flowchart TD\n  accTitle: Greeting\n  A[Hello] --> B[World]\n  click A "https://example.com"'
+    const { container } = render(<ChatTranscript events={[
+      event(1, 'agent.message.completed', 'assistant', 'completed', { text: `\`\`\`mermaid\n${source}\n\`\`\`\n\n\`\`\`mermaid\n${source}\n\`\`\`` }),
+    ]} />)
+    await waitFor(() => expect(container.querySelectorAll('.message-diagram svg.pele')).toHaveLength(2))
+    const ids = Array.from(container.querySelectorAll('.message-diagram [id]'), (element) => element.id)
+    expect(ids.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(container.querySelector('.message-diagram svg a')).not.toBeInTheDocument()
+    expect(container.querySelector('.message-diagram svg image')).not.toBeInTheDocument()
+  })
+})
+
 test('preserves selected response text while unrelated stream content updates', () => {
   const completed = event(1, 'agent.message.completed', 'assistant', 'completed', {
     item_id: 'msg_1',

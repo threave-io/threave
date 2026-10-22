@@ -29,6 +29,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
+import { MermaidDiagram } from '@/components/mermaid-diagram'
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual'
 import remarkGfm from 'remark-gfm'
 import remarkDirective from 'remark-directive'
@@ -1423,6 +1424,13 @@ const MarkdownContent = memo(function MarkdownContent({
         code: ({ children, className }) => {
           const code = childrenToString(children)
           const block = className?.startsWith('language-') || code.endsWith('\n')
+          if (className?.split(/\s+/).some((name) => name.toLowerCase() === 'language-mermaid')) {
+            return (
+              <MermaidDiagram source={code.replace(/\n$/, '')}>
+                <CodeBlock code={code} className={className} variant="default">{children}</CodeBlock>
+              </MermaidDiagram>
+            )
+          }
           if (block) {
             return (
               <CodeBlock code={code} className={className} variant={variant}>
