@@ -722,8 +722,13 @@ export function latestTerminalEvent(events: AgentEvent[]) {
 
 export function latestTokenUsage(events: AgentEvent[]) {
   let latest: TokenUsageSummary | null = null
-  const claudeUsage = claudeTokenUsageReducer()
+  let claudeUsage = claudeTokenUsageReducer()
   for (const event of sortedUniqueEvents(events)) {
+    if (isActionBreakEvent(event) && payloadString(event.payload, ['action']) === 'clear') {
+      latest = null
+      claudeUsage = claudeTokenUsageReducer()
+      continue
+    }
     const summary = claudeUsage(event) ?? tokenUsageFromEvent(event)
     if (summary) {
       latest = summary
@@ -2536,6 +2541,11 @@ function claudeTokenUsageReducer() {
     const payload = event.payload
     if (!isRecord(payload) || payload.provider !== 'claude' || payloadString(payload, ['parent_tool_use_id'])) return null
     const type = payloadString(payload, ['provider_event_type'])
+    if (type === 'system' && payloadString(payload, ['subtype']) === 'compact_boundary') {
+      last = null
+      messageID = ''
+      return { kind: 'tokens', total, last, modelContextWindow: window, updatedAt: event.created_at, seq: event.seq }
+    }
     const nextRun = payloadString(payload, ['run_id'])
     if ((nextRun && nextRun !== runID) || type === 'system/init') {
       runID = nextRun

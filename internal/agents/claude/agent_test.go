@@ -586,6 +586,23 @@ func runFakeClaude() {
 		"subtype":    "init",
 		"session_id": "session_fake",
 	})
+	message, _ := user["message"].(map[string]any)
+	if scenario := os.Getenv("GORCHESTRA_FAKE_CLAUDE_STEERING"); scenario != "" {
+		runFakeClaudeSteering(scenario, decoder, encoder)
+		return
+	}
+	if message["content"] == "/compact" {
+		if !strings.Contains(strings.Join(os.Args, " "), "--resume session_existing") {
+			os.Exit(23)
+		}
+		if os.Getenv("GORCHESTRA_FAKE_CLAUDE_COMPACT_ERROR") != "" {
+			_ = encoder.Encode(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "Compaction failed", "session_id": "session_existing"})
+			return
+		}
+		_ = encoder.Encode(map[string]any{"type": "system", "subtype": "compact_boundary", "session_id": "session_existing", "compact_metadata": map[string]any{"trigger": "manual", "pre_tokens": 12000}})
+		_ = encoder.Encode(map[string]any{"type": "result", "subtype": "success", "session_id": "session_existing"})
+		return
+	}
 	if os.Getenv("GORCHESTRA_FAKE_CLAUDE_BACKGROUND_RESULT") != "" {
 		_ = encoder.Encode(map[string]any{
 			"type":       "system",

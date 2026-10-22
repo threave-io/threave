@@ -33,7 +33,7 @@ synthetic sessions; physical iOS and a live model round-trip remain manual check
 
 ## Send now (generic steering)
 
-During a Codex message run, the composer also offers **Send now**, without needing
+During a Codex or Claude message run, the composer also offers **Send now**, without needing
 an open question. Cmd/Ctrl+Enter sends to the active run; plain Enter and
 Cmd/Ctrl+Shift+Enter still queue the draft for a later run. Shift+Enter inserts a
 newline. Queue and Stop retain their existing behavior. Narrow layouts use an
@@ -50,6 +50,11 @@ changes. The optional provider-neutral `SteeringBroker` registers a callback for
 the exact Gorchestra run; Codex captures the original provider thread/turn IDs and
 uses the same acknowledged `turn/steer` delivery path as async answers. A stale
 target is rejected rather than applied to the next run.
+
+Claude implements that same broker with UUID-correlated streaming input replays.
+It can take the correction at the next processing opportunity; it does not cancel
+the current tool or restart the provider. See [Claude input](claude-input.md#send-now)
+for acknowledgement, queued-result handling, and local validation details.
 
 The client saves the submission and its target run before clearing the draft.
 The server reserves the existing durable submission receipt, persists

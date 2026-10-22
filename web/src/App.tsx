@@ -2610,7 +2610,7 @@ function ArchiveSessionConfirmDialog({
 
 function sessionActionDialogCopy(action: SessionContextAction, agentType?: string) {
   if (action === 'clear') {
-    const providerName = agentType === 'opencode' ? 'OpenCode session' : 'Codex thread'
+    const providerName = agentType === 'opencode' ? 'OpenCode session' : agentType === 'claude' ? 'Claude session' : 'Codex thread'
     return {
       title: 'Clear context?',
       description:
@@ -2623,7 +2623,7 @@ function sessionActionDialogCopy(action: SessionContextAction, agentType?: strin
   return {
     title: 'Compact context?',
     description:
-      'Ask Codex to summarize the current thread context so the session can continue with less token pressure.',
+      `Ask ${agentType === 'claude' ? 'Claude' : 'Codex'} to summarize the current context so the session can continue with less token pressure.`,
     confirmLabel: 'Compact',
     pendingLabel: 'Compacting',
   }

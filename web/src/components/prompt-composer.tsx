@@ -270,7 +270,7 @@ export function PromptComposer({
   const hasSelectedSkills = selectedSkills.length > 0
   const shouldLoadSkills = hasSelectedSkills || skillsOpen || skillTypeahead !== null
   const canSubmit = !submissionBlocked && !offline && !disabled && !submitting && !cancelling && !queueActionPending && (content.trim().length > 0 || hasAttachments || hasSelectedSkills)
-  const showSendNow = agentType === 'codex' && sessionStatus === 'running'
+  const showSendNow = (agentType === 'codex' || agentType === 'claude') && sessionStatus === 'running'
   const canSendNow = showSendNow && Boolean(steeringRunID) && !hasPendingUserInput && !submissionBlocked && !offline && !submitting && !cancelling && !queueActionPending && (content.trim().length > 0 || hasAttachments || hasSelectedSkills)
   const queueBlockedByAttachments = hasAttachments
   const canQueue =

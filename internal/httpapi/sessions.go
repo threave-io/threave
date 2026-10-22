@@ -1747,8 +1747,8 @@ func (api API) clearSessionHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "session is archived")
 		return
 	}
-	if session.AgentType != "codex" && session.AgentType != "opencode" {
-		writeError(w, http.StatusBadRequest, "session clear requires a codex or opencode session")
+	if session.AgentType != "codex" && session.AgentType != "opencode" && session.AgentType != "claude" {
+		writeError(w, http.StatusBadRequest, "session clear requires a codex, opencode, or claude session")
 		return
 	}
 
@@ -1813,12 +1813,16 @@ func (api API) compactSessionActionHandler(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusConflict, "session is archived")
 		return
 	}
-	if session.AgentType != "codex" {
-		writeError(w, http.StatusBadRequest, "session action requires a codex session")
+	if session.AgentType != "codex" && session.AgentType != "claude" {
+		writeError(w, http.StatusBadRequest, "session action requires a codex or claude session")
 		return
 	}
 	if strings.TrimSpace(session.ProviderSessionID) == "" {
-		writeError(w, http.StatusConflict, "session has no codex thread to compact")
+		message := "session has no codex thread to compact"
+		if session.AgentType == "claude" {
+			message = "session has no claude session to compact"
+		}
+		writeError(w, http.StatusConflict, message)
 		return
 	}
 

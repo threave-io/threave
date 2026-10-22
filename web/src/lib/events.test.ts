@@ -1429,6 +1429,18 @@ test('Claude merges snapshots, ignores subagents, and allows context to shrink a
   expect(latestTokenUsage(history)).toMatchObject({ last: { totalTokens: 10_002 }, total: { totalTokens: 110_072 } })
 })
 
+test('Claude context usage resets on clear and waits for fresh usage after compaction', () => {
+  const history = [event(1, 'agent.status.started', { provider: 'claude', provider_event_type: 'message_start', model: 'sonnet', message_id: 'one', usage: { input_tokens: 50_000, output_tokens: 10 } })]
+  const compacted = [...history, event(2, 'provider.claude.event', { provider: 'claude', provider_event_type: 'system', subtype: 'compact_boundary' })]
+  expect(latestTokenUsage(compacted)?.last).toBeNull()
+  const resumed = [...compacted, event(3, 'agent.status.started', { provider: 'claude', provider_event_type: 'message_start', model: 'sonnet', message_id: 'two', usage: { input_tokens: 2_000, output_tokens: 1 } })]
+  expect(latestTokenUsage(resumed)?.last?.totalTokens).toBe(2_001)
+  const cleared = [...resumed, event(4, 'session.action.completed', { action: 'clear' })]
+  expect(latestTokenUsage(cleared)).toBeNull()
+  expect(latestTokenUsage([...cleared, event(5, 'agent.run.started', { provider: 'claude', provider_event_type: 'system/init', model: 'sonnet' })])).toMatchObject({ last: null, modelContextWindow: null, total: { totalTokens: 0 } })
+  expect(latestTokenUsage([...cleared].reverse().concat(history))).toBeNull()
+})
+
 test('Claude local Sonnet fixture retains the reported 200k window and current message usage', () => {
   expect(latestTokenUsage([
     event(1, 'agent.run.started', { provider: 'claude', provider_event_type: 'system/init', model: 'claude-sonnet-4-6' }),

@@ -2561,18 +2561,19 @@ test('streamed mutating git commands refresh the file browser', async () => {
   await waitFor(() => expect(requestedURLs().filter((url) => url === '/api/sessions/sess_1/files')).toHaveLength(2))
 })
 
-test('codex session actions require dialog confirmation', async () => {
+test.each(['codex', 'claude'] as const)('%s compact requires dialog confirmation', async (agentType) => {
+  const providerLabel = agentType === 'claude' ? 'Claude' : 'Codex'
   const user = userEvent.setup()
-  const codexSession: Session = { ...firstSession, agent_type: 'codex', provider_session_id: 'thread_1' }
+  const codexSession: Session = { ...firstSession, agent_type: agentType, provider_session_id: 'thread_1' }
   const fetch = fetchMock({ sessions: [codexSession, secondSession] })
   vi.stubGlobal('fetch', fetch)
 
   render(<App />)
 
-  await user.click(await screen.findByRole('button', { name: 'Compact Codex context' }))
+  await user.click(await screen.findByRole('button', { name: `Compact ${providerLabel} context` }))
 
   const dialog = await screen.findByRole('dialog', { name: 'Compact context?' })
-  expect(dialog).toBeInTheDocument()
+  expect(within(dialog).getByText(`Ask ${providerLabel} to summarize the current context so the session can continue with less token pressure.`)).toBeInTheDocument()
   expect(fetch).not.toHaveBeenCalledWith(
     '/api/sessions/sess_1/compact',
     expect.objectContaining({ method: 'POST' }),
@@ -2588,18 +2589,19 @@ test('codex session actions require dialog confirmation', async () => {
   )
 })
 
-test('OpenCode clear requires dialog confirmation', async () => {
+test.each(['opencode', 'claude'] as const)('%s clear requires dialog confirmation', async (agentType) => {
+  const providerLabel = agentType === 'claude' ? 'Claude' : 'OpenCode'
   const user = userEvent.setup()
-  const openCodeSession: Session = { ...firstSession, agent_type: 'opencode', provider_session_id: 'ses_1' }
+  const openCodeSession: Session = { ...firstSession, agent_type: agentType, provider_session_id: 'ses_1' }
   const fetch = fetchMock({ sessions: [openCodeSession, secondSession] })
   vi.stubGlobal('fetch', fetch)
 
   render(<App />)
 
-  await user.click(await screen.findByRole('button', { name: 'Clear OpenCode context' }))
+  await user.click(await screen.findByRole('button', { name: `Clear ${providerLabel} context` }))
 
   const dialog = await screen.findByRole('dialog', { name: 'Clear context?' })
-  expect(within(dialog).getByText(/Start a fresh OpenCode session/)).toBeInTheDocument()
+  expect(within(dialog).getByText(new RegExp(`Start a fresh ${providerLabel} session`))).toBeInTheDocument()
   expect(fetch).not.toHaveBeenCalledWith(
     '/api/sessions/sess_1/clear',
     expect.objectContaining({ method: 'POST' }),

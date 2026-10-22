@@ -31,6 +31,7 @@ type normalizer struct {
 	terminal         bool
 	terminalKind     terminalKind
 	terminalError    string
+	deferResult      bool
 	toolCalls        map[string]*claudeToolCall
 	toolBlockIDs     map[int]string
 	toolInputDeltas  map[int]string
@@ -99,6 +100,10 @@ func (n *normalizer) normalizeSystem(input *streamEvent) []normalizedEvent {
 
 	if input.Subtype == "init" {
 		return compact(n.syntheticRunStarted(input, payload))
+	}
+	if input.Subtype == "compact_boundary" && input.ParentToolUseID == "" {
+		// A local /compact may finish without an assistant message or result text.
+		n.turnActivity = true
 	}
 	return []normalizedEvent{{Event: agentEvent("provider.claude.event", "system", "completed", payload)}}
 }
@@ -316,6 +321,10 @@ func (n *normalizer) normalizeResult(input *streamEvent) normalizedEvent {
 		payload["error"] = message
 		n.markTerminal(terminalFailed, message)
 		return normalizedEvent{Event: agentEvent("agent.run.failed", "assistant", "failed", payload), Terminal: terminalFailed}
+	}
+	if n.deferResult {
+		// Keep the run alive until Claude takes the queued input and responds.
+		return normalizedEvent{Event: agentEvent("provider.claude.event", "system", "completed", payload)}
 	}
 	if strings.TrimSpace(input.Result) == "" && !n.turnActivity {
 		message := "claude ended without responding"

@@ -324,14 +324,15 @@ test('run health rail offers restore for archived sessions', async () => {
   expect(screen.getByRole('button', { name: 'Restore selected session' })).toHaveTextContent('Restore')
 })
 
-test('run health rail exposes codex clear and compact actions', async () => {
+test.each(['codex', 'claude'] as const)('run health rail exposes %s clear and compact actions', async (agentType) => {
+  const providerLabel = agentType === 'claude' ? 'Claude' : 'Codex'
   const user = userEvent.setup()
   const onClear = vi.fn(async () => undefined)
   const onCompact = vi.fn(async () => undefined)
 
   render(
     <RunHealthRail
-      session={{ ...session, agent_type: 'codex', status: 'idle', provider_session_id: 'thread_1' }}
+      session={{ ...session, agent_type: agentType, status: 'idle', provider_session_id: 'thread_1' }}
       events={[]}
       streamState="connected"
       streamError=""
@@ -345,17 +346,18 @@ test('run health rail exposes codex clear and compact actions', async () => {
   expect(tokenPanel).toBeInTheDocument()
   expect(within(tokenPanel as HTMLElement).getByText('No token usage yet')).toBeInTheDocument()
 
-  await user.click(within(tokenPanel as HTMLElement).getByRole('button', { name: 'Clear Codex context' }))
-  await user.click(within(tokenPanel as HTMLElement).getByRole('button', { name: 'Compact Codex context' }))
+  await user.click(within(tokenPanel as HTMLElement).getByRole('button', { name: `Clear ${providerLabel} context` }))
+  await user.click(within(tokenPanel as HTMLElement).getByRole('button', { name: `Compact ${providerLabel} context` }))
 
   expect(onClear).toHaveBeenCalledOnce()
   expect(onCompact).toHaveBeenCalledOnce()
 })
 
-test('run health rail disables compact until a codex thread exists', () => {
+test.each(['codex', 'claude'] as const)('run health rail disables compact until a %s session exists', (agentType) => {
+  const providerLabel = agentType === 'claude' ? 'Claude' : 'Codex'
   render(
     <RunHealthRail
-      session={{ ...session, agent_type: 'codex', status: 'idle', provider_session_id: undefined }}
+      session={{ ...session, agent_type: agentType, status: 'idle', provider_session_id: undefined }}
       events={[]}
       streamState="connected"
       streamError=""
@@ -363,8 +365,8 @@ test('run health rail disables compact until a codex thread exists', () => {
     />,
   )
 
-  expect(screen.getByRole('button', { name: 'Clear Codex context' })).toBeEnabled()
-  expect(screen.getByRole('button', { name: 'Compact Codex context' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: `Clear ${providerLabel} context` })).toBeEnabled()
+  expect(screen.getByRole('button', { name: `Compact ${providerLabel} context` })).toBeDisabled()
 })
 
 test('run health rail exposes clear without compact for OpenCode sessions', async () => {

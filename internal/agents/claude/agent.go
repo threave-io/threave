@@ -136,8 +136,11 @@ func (a *Agent) Run(ctx context.Context, input agents.AgentInput, emit agents.Em
 	if err := a.Available(); err != nil {
 		return err
 	}
-	if input.Action != "" && input.Action != agents.AgentActionMessage {
+	if input.Action != "" && input.Action != agents.AgentActionMessage && input.Action != agents.AgentActionCompact {
 		return fmt.Errorf("unsupported claude agent action %q", input.Action)
+	}
+	if input.Action == agents.AgentActionCompact && strings.TrimSpace(input.ProviderSessionID) == "" {
+		return errors.New("claude compaction requires an existing provider session")
 	}
 
 	workdir, err := a.workdirForRun(input.Workdir)
@@ -147,11 +150,25 @@ func (a *Agent) Run(ctx context.Context, input agents.AgentInput, emit agents.Em
 
 	options := runOptionsFromMetadata(input.Metadata)
 	message := messageWithSkills(input.ProviderMessage(), input.Skills)
-	content, err := userMessageContent(message, input.Attachments)
+	attachments := input.Attachments
+	if input.Action == agents.AgentActionCompact {
+		// Slash commands must be the entire input, without runtime context,
+		// skill instructions, or attachments that would turn them into a prompt.
+		message = "/compact"
+		attachments = nil
+	}
+	content, err := userMessageContent(message, attachments)
 	if err != nil {
 		return err
 	}
 	cmd := a.commandWithOptions(strings.TrimSpace(input.ProviderSessionID), workdir, options)
+	steering := input.Steering
+	if input.Action == agents.AgentActionCompact {
+		steering = nil
+	}
+	if steering != nil {
+		cmd.Args = append(cmd.Args, "--replay-user-messages")
+	}
 	if err := agents.ApplyEnvironment(cmd, input.Environment); err != nil {
 		return fmt.Errorf("configure claude environment: %w", err)
 	}
@@ -187,18 +204,20 @@ func (a *Agent) Run(ctx context.Context, input agents.AgentInput, emit agents.Em
 		}
 	}()
 	run := &streamRun{
-		agent:        a,
-		incoming:     output.incoming,
-		process:      process,
-		cancelOutput: cancelOutput,
-		emit:         emit,
-		normalizer:   newNormalizer(),
-		stdin:        stdin,
-		sessionID:    input.SessionID,
-		content:      content,
-		userInput:    input.UserInput,
-		permissions:  input.Permissions,
-		options:      options,
+		agent:          a,
+		incoming:       output.incoming,
+		process:        process,
+		cancelOutput:   cancelOutput,
+		emit:           emit,
+		normalizer:     newNormalizer(),
+		stdin:          stdin,
+		sessionID:      input.SessionID,
+		content:        content,
+		userInput:      input.UserInput,
+		permissions:    input.Permissions,
+		options:        options,
+		steeringBroker: steering,
+		runID:          input.RunID,
 	}
 	err = run.execute(runCtx)
 	if ctx.Err() != nil {
@@ -308,6 +327,9 @@ func boolMetadataValue(values map[string]any, key string) bool {
 }
 
 type streamRun struct {
+	steeringBroker agents.SteeringBroker
+	runID          string
+	steering       *claudeSteering
 	agent          *Agent
 	incoming       <-chan incomingMessage
 	process        *processState
@@ -358,16 +380,19 @@ func (r *streamRun) writeJSON(value any) error {
 
 func (r *streamRun) execute(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
+	r.steering = newClaudeSteering()
 	r.controls = make(map[string]*pendingControl)
 	r.controlResults = make(chan controlResult)
 	defer func() {
 		cancel()
+		r.steering.close()
 		r.cancelOutput()
 		for _, pending := range r.controls {
 			pending.cancel()
 			pending.close()
 		}
 		_ = r.stdin.Close()
+		r.steering.writers.Wait()
 		r.stop()
 		r.controlWaiters.Wait()
 	}()
@@ -378,6 +403,15 @@ func (r *streamRun) execute(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case request := <-r.steering.requests:
+			r.startSteeringWrite(ctx, request)
+		case update := <-r.steering.updates:
+			if err := r.finishSteeringUpdate(ctx, update); err != nil {
+				return err
+			}
+			if r.normalizer.terminal {
+				return r.terminalReturn()
+			}
 		case result := <-r.controlResults:
 			if err := r.finishControl(result); err != nil {
 				return err
@@ -466,6 +500,14 @@ func (r *streamRun) handleIncoming(ctx context.Context, incoming incomingMessage
 	}
 	if incoming.Event.Type == "control_cancel_request" {
 		return r.cancelControl(ctx, incoming.Event)
+	}
+	if err := r.handleSteeringEvent(ctx, incoming.Event); err != nil {
+		return err
+	}
+	if incoming.Event.Type == "user" && incoming.Event.IsReplay {
+		// Replays acknowledge input already persisted by the shared submission
+		// flow. Do not duplicate prompt text or image data into provider events.
+		return nil
 	}
 	for _, normalized := range r.normalizer.normalize(incoming.Event) {
 		if err := r.emit(ctx, normalized.Event); err != nil {
@@ -573,7 +615,8 @@ func startStream(ctx context.Context, stdout io.Reader, stderr io.Reader) stream
 
 func scanStream(ctx context.Context, reader io.Reader, incoming chan<- incomingMessage) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	// Replayed inputs can contain eight 5 MiB attachments encoded as base64.
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 	line := 0
 	for scanner.Scan() {
 		line++
@@ -632,6 +675,10 @@ func parseStreamEvent(raw []byte) (*streamEvent, error) {
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return nil, err
 	}
+	if event.Type == "user" && event.IsReplay {
+		event.Message = nil
+		return &event, nil
+	}
 	event.Raw = append([]byte(nil), raw...)
 	return &event, nil
 }
@@ -643,6 +690,7 @@ type streamEvent struct {
 	SessionID         string          `json:"session_id,omitempty"`
 	ParentToolUseID   string          `json:"parent_tool_use_id,omitempty"`
 	UUID              string          `json:"uuid,omitempty"`
+	IsReplay          bool            `json:"isReplay,omitempty"`
 	CWD               string          `json:"cwd,omitempty"`
 	Tools             []string        `json:"tools,omitempty"`
 	MCPServers        json.RawMessage `json:"mcp_servers,omitempty"`

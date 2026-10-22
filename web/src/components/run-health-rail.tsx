@@ -118,13 +118,13 @@ export function RunHealthRail({
   ).length
   const totalToolCount = Math.max(session?.tool_count ?? 0, loadedToolCount)
   const actionPending = clearPending || compactPending
-  const supportsClear = session?.agent_type === 'codex' || session?.agent_type === 'opencode'
-  const supportsCompact = session?.agent_type === 'codex'
+  const supportsClear = session?.agent_type === 'codex' || session?.agent_type === 'opencode' || session?.agent_type === 'claude'
+  const supportsCompact = session?.agent_type === 'codex' || session?.agent_type === 'claude'
   const contextActionDisabled =
     offline || !session || session.status === 'running' || Boolean(session.archived_at) || actionPending
   const clearDisabled = contextActionDisabled || !supportsClear
   const compactDisabled = contextActionDisabled || !supportsCompact || !session?.provider_session_id
-  const contextProviderLabel = session?.agent_type === 'opencode' ? 'OpenCode' : 'Codex'
+  const contextProviderLabel = session?.agent_type === 'opencode' ? 'OpenCode' : session?.agent_type === 'claude' ? 'Claude' : 'Codex'
   const showTokenPanel = Boolean(tokenUsage) || cumulativeTokenCount > 0 || supportsClear
   const thinkingActive = session?.status === 'running' && activeThinking(activityEvents)
 
@@ -450,7 +450,7 @@ function ContextActions({
   onClear,
   onCompact,
 }: {
-  providerLabel: 'Codex' | 'OpenCode'
+  providerLabel: 'Codex' | 'OpenCode' | 'Claude'
   showCompact: boolean
   clearPending: boolean
   compactPending: boolean

@@ -21,8 +21,8 @@ function setup(overrides: Partial<ComponentProps<typeof PromptComposer>> = {}, t
   return { props, view }
 }
 
-test('Send now passes the run ID without settings, queueing, or cancelling', async () => {
-  const { props } = setup()
+test.each(['codex', 'claude'] as const)('%s Send now passes the run ID without settings, queueing, or cancelling', async (agentType) => {
+  const { props } = setup({ agentType })
   fireEvent.click(screen.getByRole('button', { name: 'Send now' }))
   await waitFor(() => expect(props.onSubmit).toHaveBeenCalledExactlyOnceWith('Change direction', undefined, [], false, [], undefined, 'run1'))
   expect(props.onCancel).not.toHaveBeenCalled()
@@ -54,7 +54,7 @@ test.each([{ offline: true }, { submissionBlocked: true }, { steeringRunID: '' }
   expect(screen.getByLabelText('Prompt')).toHaveValue('Change direction')
 })
 
-test.each([{ sessionStatus: 'idle' as const }, { agentType: 'claude' as const }])('Send now is not offered for %j', (override) => {
+test.each([{ sessionStatus: 'idle' as const }, { agentType: 'pi' as const }])('Send now is not offered for %j', (override) => {
   setup(override)
   expect(screen.queryByRole('button', { name: 'Send now' })).not.toBeInTheDocument()
 })
@@ -73,10 +73,10 @@ test('failure before durable preparation preserves the draft and blocks rapid du
   expect(screen.getByLabelText('Prompt')).toHaveValue('Change direction')
 })
 
-test('Send now supports images and selected skills without applying next-run model settings', async () => {
+test.each(['codex', 'claude'] as const)('%s Send now supports images and selected skills without applying next-run model settings', async (agentType) => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ messages: [], models: [], collaboration_modes: [], errors: [], skills: [{ name: 'review', path: '/review/SKILL.md', enabled: true, scope: 'user', description: 'Review' }] })))
   window.localStorage.setItem('gorchestra.session-composer.s', JSON.stringify({ selectedSkills: [{ name: 'review', path: '/review/SKILL.md' }] }))
-  const { props } = setup({}, 'Change direction $review ')
+  const { props } = setup({ agentType }, 'Change direction $review ')
   await userEvent.setup().upload(screen.getByLabelText('Image attachments'), new File(['image'], 'example.png', { type: 'image/png' }))
   await screen.findByAltText('example.png')
   fireEvent.click(screen.getByRole('button', { name: 'Send now' }))

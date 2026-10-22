@@ -2497,7 +2497,7 @@ func TestPiRunStartedPersistsProviderSessionID(t *testing.T) {
 }
 
 func TestClearSessionClearsProviderSessionID(t *testing.T) {
-	for _, agentType := range []string{"codex", "opencode"} {
+	for _, agentType := range []string{"codex", "opencode", "claude"} {
 		t.Run(agentType, func(t *testing.T) {
 			ctx := context.Background()
 			agent := newBlockingAgent()
@@ -2561,75 +2561,89 @@ func TestClearSessionClearsProviderSessionID(t *testing.T) {
 	}
 }
 
-func TestCompactCodexSessionStartsActionRun(t *testing.T) {
-	ctx := context.Background()
-	agent := newBlockingAgent()
-	agent.agentType = "codex"
-	dbStore, _, _, handler := newIntegrationAPI(t, ctx, agent)
-	session, err := dbStore.CreateSession(ctx, store.CreateSessionParams{
-		Title:     "Codex run",
-		AgentType: "codex",
-	})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	if _, err := dbStore.SetSessionProviderSessionID(ctx, store.SetSessionProviderSessionIDParams{
-		ID:                session.ID,
-		ProviderSessionID: "thread_existing",
-	}); err != nil {
-		t.Fatalf("set provider session id: %v", err)
-	}
-	t.Cleanup(agent.release)
+func TestCompactSessionStartsActionRun(t *testing.T) {
+	for _, agentType := range []string{"codex", "claude"} {
+		t.Run(agentType, func(t *testing.T) {
+			ctx := context.Background()
+			agent := newBlockingAgent()
+			agent.agentType = agentType
+			dbStore, _, _, handler := newIntegrationAPI(t, ctx, agent)
+			session, err := dbStore.CreateSession(ctx, store.CreateSessionParams{
+				Title:     "Codex run",
+				AgentType: agentType,
+			})
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if _, err := dbStore.SetSessionProviderSessionID(ctx, store.SetSessionProviderSessionIDParams{
+				ID:                session.ID,
+				ProviderSessionID: "thread_existing",
+			}); err != nil {
+				t.Fatalf("set provider session id: %v", err)
+			}
+			t.Cleanup(agent.release)
 
-	rec := postJSON(handler, "/api/sessions/"+session.ID+"/compact", ``)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("expected status %d, got %d with body %s", http.StatusAccepted, rec.Code, rec.Body.String())
+			rec := postJSON(handler, "/api/sessions/"+session.ID+"/compact", ``)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("expected status %d, got %d with body %s", http.StatusAccepted, rec.Code, rec.Body.String())
+			}
+
+			select {
+			case input := <-agent.started:
+				if input.Action != agents.AgentActionCompact {
+					t.Fatalf("expected compact action, got %q", input.Action)
+				}
+				if input.ProviderSessionID != "thread_existing" {
+					t.Fatalf("expected provider session id thread_existing, got %q", input.ProviderSessionID)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("context ended before agent started")
+			}
+
+			events := listIntegrationEvents(t, ctx, dbStore, session.ID)
+			assertEventTypes(t, events, []string{"session.action.completed", "session.status.updated"})
+			assertPayloadAction(t, events[0], "compact")
+			assertPayloadStatus(t, events[1], store.SessionStatusRunning)
+
+			agent.release()
+			waitFor(t, func() bool {
+				session, err := dbStore.GetSession(ctx, session.ID)
+				return err == nil && session.Status == store.SessionStatusIdle
+			})
+		})
 	}
-
-	select {
-	case input := <-agent.started:
-		if input.Action != agents.AgentActionCompact {
-			t.Fatalf("expected compact action, got %q", input.Action)
-		}
-		if input.ProviderSessionID != "thread_existing" {
-			t.Fatalf("expected provider session id thread_existing, got %q", input.ProviderSessionID)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("context ended before agent started")
-	}
-
-	events := listIntegrationEvents(t, ctx, dbStore, session.ID)
-	assertEventTypes(t, events, []string{"session.action.completed", "session.status.updated"})
-	assertPayloadAction(t, events[0], "compact")
-	assertPayloadStatus(t, events[1], store.SessionStatusRunning)
-
-	agent.release()
-	waitFor(t, func() bool {
-		session, err := dbStore.GetSession(ctx, session.ID)
-		return err == nil && session.Status == store.SessionStatusIdle
-	})
 }
 
-func TestCompactCodexSessionWithoutProviderSessionIDReturnsConflict(t *testing.T) {
-	ctx := context.Background()
-	dbStore, _, _, handler := newIntegrationAPI(t, ctx, codexThreadAgent{threadID: "thread_new"})
-	session, err := dbStore.CreateSession(ctx, store.CreateSessionParams{
-		Title:     "Codex run",
-		AgentType: "codex",
-	})
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
+func TestCompactSessionWithoutProviderSessionIDReturnsConflict(t *testing.T) {
+	for _, agentType := range []string{"codex", "claude"} {
+		t.Run(agentType, func(t *testing.T) {
+			ctx := context.Background()
+			agent := newBlockingAgent()
+			agent.agentType = agentType
+			dbStore, _, _, handler := newIntegrationAPI(t, ctx, agent)
+			session, err := dbStore.CreateSession(ctx, store.CreateSessionParams{
+				Title:     "Codex run",
+				AgentType: agentType,
+			})
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
 
-	rec := postJSON(handler, "/api/sessions/"+session.ID+"/compact", ``)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("expected status %d, got %d with body %s", http.StatusConflict, rec.Code, rec.Body.String())
-	}
-	assertErrorResponse(t, rec, "session has no codex thread to compact")
+			rec := postJSON(handler, "/api/sessions/"+session.ID+"/compact", ``)
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("expected status %d, got %d with body %s", http.StatusConflict, rec.Code, rec.Body.String())
+			}
+			message := "session has no codex thread to compact"
+			if agentType == "claude" {
+				message = "session has no claude session to compact"
+			}
+			assertErrorResponse(t, rec, message)
 
-	events := listIntegrationEvents(t, ctx, dbStore, session.ID)
-	if len(events) != 0 {
-		t.Fatalf("expected no events to be appended, got %#v", events)
+			events := listIntegrationEvents(t, ctx, dbStore, session.ID)
+			if len(events) != 0 {
+				t.Fatalf("expected no events to be appended, got %#v", events)
+			}
+		})
 	}
 }
 
@@ -2642,7 +2656,7 @@ func TestClearSessionRejectsUnsupportedAgent(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d with body %s", http.StatusBadRequest, rec.Code, rec.Body.String())
 	}
-	assertErrorResponse(t, rec, "session clear requires a codex or opencode session")
+	assertErrorResponse(t, rec, "session clear requires a codex, opencode, or claude session")
 }
 
 func TestMessageSubmissionRejectsCodexOptionsForNonCodexSession(t *testing.T) {

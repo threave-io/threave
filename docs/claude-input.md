@@ -31,9 +31,62 @@ own checks. Claude's explicit `dontAsk` mode suppresses `AskUserQuestion` before
 it reaches the adapter; use the normal interactive policy or plan mode when
 clarifying questions are wanted. Explicit provider deny rules remain in effect.
 
-This change does not add Claude steering, background-agent lifecycle management,
-or session compaction. The adapter still handles one Gorchestra run through its
-first terminal result. Those are separate audit follow-ups.
+Background-agent lifecycle management remains a separate audit follow-up.
+
+## Send now
+
+Claude uses the same optional `SteeringBroker`, message endpoint, run targeting,
+durable submission receipts, and composer controls as Codex. Text, images, and
+selected skill references travel over the existing process's stdin. The active
+model, permissions, and run identity are retained; no stop-and-resume is performed.
+
+Message runs enable `--replay-user-messages`. Each injected input has a unique
+UUID, and only a main-session `user` replay with `isReplay: true` and that UUID
+confirms delivery. A successful pipe write alone does not confirm it. This is
+provider input acceptance, not proof that the model has acted on the correction.
+Claude can consume input at a subsequent opportunity rather than interrupting an
+in-flight tool. Replays are consumed as acknowledgements without duplicating text
+or image data into history. Input replay lines support the API's attachment sizes.
+
+If a result precedes a pending replay, it is persisted as an intermediate provider
+result and the run stays open for the injected input's response. Final completion,
+provider failure, cancellation, or process exit unregisters steering and releases
+delivery waiters. Expired or unconfirmed delivery follows the shared visible
+failure/recovery path, without retries or silently moving input to a new run.
+Compaction runs do not register steering.
+
+Local tests cover matching and unrelated replays, merged/queued input, repeated
+corrections, streaming during delivery, images/skills, large echoes, stale targets,
+timeout, blocked stdin, provider failure/exit, cleanup, API deduplication, and the
+shared composer. On 2026-10-22, local CLI 2.1.226 and Haiku passed both a direct
+protocol probe and the Go adapter's live steering test. While Bash ran `sleep 8`,
+the test injected a correction from `ORIGINAL` to `STEERED`. Claude replayed the
+matching UUID after the tool completed, followed the correction, and produced one
+terminal completion in the same Threave run. The adapter confirmed delivery after
+about seven seconds. No interrupt or provider restart was needed.
+
+The live test uses a temporary workspace, disables user/project settings and MCP
+servers, and allows only Bash for the sleep command. It requires a logged-in CLI
+and makes live model calls, so it is skipped by default. To repeat it locally:
+
+```sh
+THREAVE_LIVE_CLAUDE_STEERING=1 go test ./internal/agents/claude -run '^TestLiveClaudeSteering$' -count=1 -v
+```
+
+## Clear and compact
+
+Claude sessions expose Clear and Compact in the context controls. Both require an
+inactive, unarchived session. Clear detaches the provider session so the next message
+starts a fresh Claude conversation; existing Threave activity remains visible.
+Compact requires an existing provider session and runs Claude's native `/compact`
+command with `--resume`. The command is sent alone, without runtime instructions,
+skill text, or attachments. Provider failures remain visible as failed runs.
+A `compact_boundary` followed by a successful result completes the action even
+without an assistant reply. Clear resets the context meter; compaction invalidates
+its old context estimate until Claude reports fresh usage.
+
+Tests cover the API action lifecycle, provider reset, exact command input, resume,
+empty successful compaction results, failures, UI confirmation, and usage replay.
 
 Protocol references: [Claude user input](https://code.claude.com/docs/en/agent-sdk/user-input),
 [streaming image input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode),
