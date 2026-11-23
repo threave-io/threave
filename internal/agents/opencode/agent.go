@@ -302,7 +302,8 @@ func (a *Agent) workdirForRun(inputWorkdir string) (string, error) {
 }
 
 func (a *Agent) command(workdir string) *exec.Cmd {
-	cmd := exec.Command(a.binary, "acp", "--cwd", workdir)
+	// Set the process directory directly; newer OpenCode ACP versions reject --cwd.
+	cmd := exec.Command(a.binary, "acp")
 	cmd.Dir = workdir
 	return cmd
 }
@@ -320,6 +321,7 @@ type acpRun struct {
 	userInput         agents.UserInputBroker
 	permissions       agents.PermissionBroker
 	options           openCodeRunOptions
+	modelConfigID     string
 
 	stateMu    sync.Mutex
 	acpSession string
@@ -426,6 +428,7 @@ func (r *acpRun) setupSession(ctx context.Context, workdir string) error {
 		return fmt.Errorf("opencode %s response missing sessionId", method)
 	}
 	r.setACPSession(sessionID)
+	r.modelConfigID = modelConfigOptionID(response.Result)
 
 	return r.emit(ctx, agents.AgentEvent{
 		Type:   "agent.run.started",
@@ -454,10 +457,16 @@ func (r *acpRun) configureSession(ctx context.Context) error {
 }
 
 func (r *acpRun) setModel(ctx context.Context, model string) error {
-	id, err := r.rpc.sendRequest("session/set_model", map[string]any{
+	method := "session/set_model"
+	params := map[string]any{
 		"sessionId": r.getACPSession(),
 		"modelId":   model,
-	})
+	}
+	if r.modelConfigID != "" {
+		method = "session/set_config_option"
+		params = map[string]any{"sessionId": r.getACPSession(), "configId": r.modelConfigID, "value": model}
+	}
+	id, err := r.rpc.sendRequest(method, params)
 	if err != nil {
 		return err
 	}
@@ -466,9 +475,30 @@ func (r *acpRun) setModel(ctx context.Context, model string) error {
 		return err
 	}
 	if response.Error != nil {
-		return fmt.Errorf("opencode session/set_model failed: %s", response.Error.Message)
+		return fmt.Errorf("opencode %s failed: %s", method, response.Error.Message)
 	}
 	return nil
+}
+
+// ACP config selectors supersede the legacy model method when advertised by
+// session setup. Use the returned ID rather than assuming a provider's ID.
+func modelConfigOptionID(result json.RawMessage) string {
+	var response struct {
+		ConfigOptions []struct {
+			ID       string `json:"id"`
+			Category string `json:"category"`
+			Type     string `json:"type"`
+		} `json:"configOptions"`
+	}
+	if json.Unmarshal(result, &response) != nil {
+		return ""
+	}
+	for _, option := range response.ConfigOptions {
+		if option.Type == "select" && (option.Category == "model" || option.ID == "model") {
+			return option.ID
+		}
+	}
+	return ""
 }
 
 func (r *acpRun) setMode(ctx context.Context, mode string) error {

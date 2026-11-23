@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -59,14 +61,14 @@ func TestAvailabilityDetectionWrapsUnavailable(t *testing.T) {
 	}
 }
 
-func TestCommandConstructionUsesACPWithCWD(t *testing.T) {
+func TestCommandConstructionUsesACPWithProcessWorkingDirectory(t *testing.T) {
 	agent := New(WithBinary("/opt/bin/opencode"))
 	cmd := agent.command("/tmp/workspace")
 
 	if cmd.Path != "/opt/bin/opencode" {
 		t.Fatalf("expected path /opt/bin/opencode, got %q", cmd.Path)
 	}
-	wantArgs := []string{"/opt/bin/opencode", "acp", "--cwd", "/tmp/workspace"}
+	wantArgs := []string{"/opt/bin/opencode", "acp"}
 	if !reflect.DeepEqual(cmd.Args, wantArgs) {
 		t.Fatalf("expected args %#v, got %#v", wantArgs, cmd.Args)
 	}
@@ -137,11 +139,15 @@ func TestAgentRunsFakeOpenCodeACP(t *testing.T) {
 	t.Setenv("GORCHESTRA_AGENT_RUN_TEST_VALUE", "parent")
 	agent := fakeOpenCodeAgent(t)
 	recorder := newEventRecorder()
+	workdir := filepath.Join(t.TempDir(), "workspace with spaces")
+	if err := os.Mkdir(workdir, 0700); err != nil {
+		t.Fatal(err)
+	}
 
 	err := agent.Run(context.Background(), agents.AgentInput{
 		SessionID:   "sess_test",
 		Message:     "hello",
-		Workdir:     t.TempDir(),
+		Workdir:     workdir,
 		Environment: map[string]string{"GORCHESTRA_AGENT_RUN_TEST_VALUE": "run-only"},
 		Context:     "Use the Gorchestra host controls.",
 	}, recorder.emit)
@@ -192,23 +198,35 @@ func TestAgentResumesExistingOpenCodeSession(t *testing.T) {
 }
 
 func TestAgentSendsSelectedModelBeforePrompt(t *testing.T) {
-	t.Setenv("GORCHESTRA_FAKE_OPENCODE_ACP", "1")
-	t.Setenv("GORCHESTRA_FAKE_OPENCODE_EXPECT_MODEL", "openai/gpt-5.4-mini")
-	agent := fakeOpenCodeAgent(t)
-	recorder := newEventRecorder()
+	for _, configID := range []string{"", "model", "language-model"} {
+		for _, resume := range []bool{false, true} {
+			t.Run(fmt.Sprintf("config=%s/resume=%v", configID, resume), func(t *testing.T) {
+				t.Setenv("GORCHESTRA_FAKE_OPENCODE_MODEL_CONFIG_ID", configID)
+				providerSessionID := ""
+				if resume {
+					providerSessionID = "ses_existing"
+				}
+				t.Setenv("GORCHESTRA_FAKE_OPENCODE_ACP", "1")
+				t.Setenv("GORCHESTRA_FAKE_OPENCODE_EXPECT_MODEL", "openai/gpt-5.4-mini")
+				agent := fakeOpenCodeAgent(t)
+				recorder := newEventRecorder()
 
-	err := agent.Run(context.Background(), agents.AgentInput{
-		SessionID: "sess_test",
-		Message:   "hello",
-		Workdir:   t.TempDir(),
-		Metadata: map[string]any{
-			"opencode_options": map[string]any{
-				"model": "openai/gpt-5.4-mini",
-			},
-		},
-	}, recorder.emit)
-	if err != nil {
-		t.Fatalf("run agent: %v", err)
+				err := agent.Run(context.Background(), agents.AgentInput{
+					SessionID:         "sess_test",
+					ProviderSessionID: providerSessionID,
+					Message:           "hello",
+					Workdir:           t.TempDir(),
+					Metadata: map[string]any{
+						"opencode_options": map[string]any{
+							"model": "openai/gpt-5.4-mini",
+						},
+					},
+				}, recorder.emit)
+				if err != nil {
+					t.Fatalf("run agent: %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -288,12 +306,28 @@ func (r *eventRecorder) snapshot() []normalizedEvent {
 }
 
 func runFakeOpenCode() {
+	// Model ACP versions that reject CLI workspace flags before reading stdin.
+	if len(os.Args) != 2 || os.Args[1] != "acp" {
+		_, _ = os.Stdout.WriteString("DESCRIPTION: unsupported ACP arguments\n")
+		os.Exit(11)
+	}
 	if expected := os.Getenv("GORCHESTRA_FAKE_OPENCODE_EXPECT_ENV"); expected != "" && os.Getenv("GORCHESTRA_AGENT_RUN_TEST_VALUE") != expected {
 		os.Exit(10)
 	}
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 	expectedModel := os.Getenv("GORCHESTRA_FAKE_OPENCODE_EXPECT_MODEL")
+	configID := os.Getenv("GORCHESTRA_FAKE_OPENCODE_MODEL_CONFIG_ID")
+	sessionResult := func(newSession bool) map[string]any {
+		result := map[string]any{}
+		if newSession {
+			result["sessionId"] = "ses_fake"
+		}
+		if configID != "" {
+			result["configOptions"] = []map[string]any{{"id": configID, "category": "model", "type": "select", "currentValue": "default-model", "options": []map[string]any{{"value": expectedModel, "name": "Selected model"}}}}
+		}
+		return result
+	}
 	modelSet := expectedModel == ""
 	for scanner.Scan() {
 		var request map[string]any
@@ -301,6 +335,16 @@ func runFakeOpenCode() {
 			continue
 		}
 		id := request["id"]
+		if request["method"] == "session/new" || request["method"] == "session/resume" {
+			params, _ := request["params"].(map[string]any)
+			cwd, err := os.Getwd()
+			requested, _ := params["cwd"].(string)
+			actual, actualErr := filepath.EvalSymlinks(cwd)
+			expected, expectedErr := filepath.EvalSymlinks(requested)
+			if err != nil || actualErr != nil || expectedErr != nil || actual != expected {
+				os.Exit(12)
+			}
+		}
 		switch request["method"] {
 		case "initialize":
 			_ = encoder.Encode(map[string]any{
@@ -321,15 +365,18 @@ func runFakeOpenCode() {
 			_ = encoder.Encode(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      id,
-				"result":  map[string]any{"sessionId": "ses_fake"},
+				"result":  sessionResult(true),
 			})
 		case "session/resume":
 			_ = encoder.Encode(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      id,
-				"result":  map[string]any{},
+				"result":  sessionResult(false),
 			})
 		case "session/set_model":
+			if configID != "" {
+				os.Exit(13)
+			}
 			params, _ := request["params"].(map[string]any)
 			if expectedModel != "" && params["modelId"] != expectedModel {
 				_ = encoder.Encode(map[string]any{
@@ -348,6 +395,13 @@ func runFakeOpenCode() {
 				"id":      id,
 				"result":  map[string]any{},
 			})
+		case "session/set_config_option":
+			params, _ := request["params"].(map[string]any)
+			if configID == "" || params["configId"] != configID || params["value"] != expectedModel || params["sessionId"] == "" {
+				os.Exit(14)
+			}
+			modelSet = true
+			_ = encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": sessionResult(false)})
 		case "session/set_mode":
 			_ = encoder.Encode(map[string]any{
 				"jsonrpc": "2.0",
