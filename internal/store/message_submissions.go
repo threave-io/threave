@@ -14,6 +14,8 @@ type MessageSubmission struct {
 	HTTPStatus  int             `json:"http_status"`
 	Response    json.RawMessage `json:"response"`
 	RequestHash string          `json:"-"`
+	TargetRunID string          `json:"target_run_id,omitempty"`
+	RunEnded    bool            `json:"run_ended,omitempty"`
 }
 
 // This completed failure occurs before the agent is launched. Keep the
@@ -97,5 +99,24 @@ func (s *Store) GetMessageSubmission(ctx context.Context, sessionID, clientID st
 	} else if errors.Is(err, sql.ErrNoRows) {
 		err = nil
 	}
+	if err != nil || record.State != "unknown" {
+		return record, err
+	}
+	// An ended target cannot receive more input, but its end does not prove
+	// whether an unacknowledged input was consumed. Keep the identity reserved.
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(json_extract(payload_json, '$.run_id'), '')
+ FROM events WHERE session_id = ? AND type = 'user.message.steer.submitted'
+ AND json_extract(payload_json, '$.client_submission_id') = ? ORDER BY seq DESC LIMIT 1`, sessionID, clientID).Scan(&record.TargetRunID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return record, nil
+	}
+	if err != nil || record.TargetRunID == "" {
+		return record, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT
+ EXISTS(SELECT 1 FROM events WHERE session_id = ? AND json_extract(payload_json, '$.run_id') = ?
+ AND (type IN ('agent.run.completed', 'agent.run.failed', 'agent.run.cancelled')
+ OR (type = 'session.status.updated' AND json_extract(payload_json, '$.status') IN ('idle', 'failed'))))
+ OR EXISTS(SELECT 1 FROM sessions WHERE id = ? AND status != 'running')`, sessionID, record.TargetRunID, sessionID).Scan(&record.RunEnded)
 	return record, err
 }

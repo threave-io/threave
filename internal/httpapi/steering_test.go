@@ -130,6 +130,28 @@ func TestSendNowPersistsDeduplicatesAndNeverQueues(t *testing.T) {
 				if count.Load() != 1 {
 					t.Fatal("invalid requests delivered")
 				}
+				if reject {
+					_ = runs.Cancel(session.ID, runcontrol.Cancellation{})
+					waitFor(t, func() bool {
+						current, err := s.GetSession(ctx, session.ID)
+						return err == nil && current.Status != store.SessionStatusRunning
+					})
+					status := get(handler, "/api/sessions/"+session.ID+"/submissions/steer1")
+					var ended struct {
+						State    string `json:"state"`
+						RunEnded bool   `json:"run_ended"`
+						Target   string `json:"target_run_id"`
+					}
+					if err := json.Unmarshal(status.Body.Bytes(), &ended); err != nil {
+						t.Fatal(err)
+					}
+					if ended.State != "unknown" || !ended.RunEnded || ended.Target != runID {
+						t.Fatalf("ended steer receipt: %s", status.Body.String())
+					}
+					if count.Load() != 1 {
+						t.Fatal("terminal reconciliation resent input")
+					}
+				}
 			})
 		}
 	}

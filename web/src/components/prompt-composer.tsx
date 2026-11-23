@@ -74,7 +74,11 @@ const claudeModelOptions = [
 ]
 const claudeEffortOptions = ['low', 'medium', 'high', 'xhigh', 'max'].map((value) => ({ value, label: value }))
 
-export type PromptInsertion = { sessionID: string; prompt: string }
+export type PromptInsertion = {
+  sessionID: string
+  prompt: string
+  recovery?: { submissionID: string; skills: SkillReference[]; attachments: MessageAttachment[] }
+}
 
 type Props = {
   sessionID?: string
@@ -108,7 +112,7 @@ type Props = {
   onFocus?: () => void
   focusRequest?: number
   promptInsertion?: PromptInsertion | null
-  onPromptInserted?: (insertion: PromptInsertion) => void
+  onPromptInserted?: (insertion: PromptInsertion, error?: string) => void
   offline?: boolean
   submissionBlocked?: boolean
   prepareBeforeClear?: boolean
@@ -652,6 +656,34 @@ export function PromptComposer({
     if (!promptInsertion || promptInsertion.sessionID !== sessionID ||
       appliedInsertionRef.current === promptInsertion || submitting) return
     appliedInsertionRef.current = promptInsertion
+    if (promptInsertion.recovery) {
+      const recovery = promptInsertion.recovery
+      const local = currentDraftRef.current
+      const prompt = promptInsertion.prompt
+      const restoredContent = !prompt || local.content === prompt || local.content.endsWith(`\n\n${prompt}`)
+        ? local.content : local.content ? `${local.content}\n\n${prompt}` : prompt
+      const skills = [...local.selectedSkills]
+      for (const skill of recovery.skills) {
+        if (!skills.some((current) => current.name === skill.name && current.path === skill.path)) skills.push(skill)
+      }
+      try {
+        // Save before allowing the pending record to be removed, so a reload
+        // between restoration and deletion cannot lose the recovered text.
+        saveComposerDraft(sessionID, { draft: restoredContent, selectedSkills: skills })
+      } catch {
+        onPromptInserted?.(promptInsertion, 'Unable to save the recovered draft. The pending message was kept; copy its text before closing this tab.')
+        return
+      }
+      setContent(restoredContent)
+      setSelectedSkills(skills)
+      setAttachments((current) => [...current, ...recovery.attachments
+        .filter((attachment) => !current.some((existing) => existing.data_url === attachment.data_url && existing.name === attachment.name))
+        .map((attachment, index) => ({ ...attachment, id: `recovery-${recovery.submissionID}-${index}` }))])
+      setSkillTypeahead(null)
+      insertionNeedsFocusRef.current = true
+      onPromptInserted?.(promptInsertion)
+      return
+    }
     setContent((current) => current ? `${current}\n\n${promptInsertion.prompt}` : promptInsertion.prompt)
     setSkillTypeahead(null)
     insertionNeedsFocusRef.current = true

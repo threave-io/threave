@@ -64,6 +64,19 @@ That acknowledgment deduplicates the optimistic message. Unconfirmed delivery
 records `user.message.steer.failed` and remains recoverable without automatic
 resending; recovery retains the original run target even after a reload.
 
+Unknown delivery can be explicitly dismissed after a duplicate-delivery warning.
+Confirmation appends the recovered text to the existing composer draft and saves
+that draft before removing the local pending record; storage failure keeps the
+record recoverable. Selected skills and attachments are restored to the mounted
+composer too (attachments retain the composer's normal in-memory lifetime).
+Dismissal only removes the local block; it does not change the server receipt or
+send anything. A later send is an explicit new submission and may duplicate work.
+
+When a steering run ends or a successor starts, the client rechecks unresolved
+receipts. Canonical acceptance clears recovery; otherwise the server reports the
+ended target alongside `state: unknown`. The original submission ID stays reserved
+and cannot restart work. Reopening the session performs the same reconciliation.
+
 Coverage includes run-bound delivery and cleanup, persistence-before-delivery,
 provider rejection, duplicate submissions, unchanged queues, keyboard shortcuts,
 attachments/skills, and durable recovery against a successor run. Synthetic

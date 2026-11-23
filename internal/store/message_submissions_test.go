@@ -130,3 +130,58 @@ func TestSubmissionRecoveryDoesNotReclaimAmbiguousOrDeliveredMessages(t *testing
 		})
 	}
 }
+
+func TestUncertainSteeringReconcilesEndedTargetAcrossReopen(t *testing.T) {
+	for _, terminal := range []string{"agent.run.completed", "agent.run.failed", "agent.run.cancelled", "session.status.updated"} {
+		t.Run(terminal, func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "steering.db")
+			db, err := Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			session := createTestSession(t, ctx, db)
+			if _, err := db.UpdateSessionStatus(ctx, UpdateSessionStatusParams{ID: session.ID, Status: SessionStatusRunning}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := db.ClaimMessageSubmission(ctx, session.ID, "steer-id", "hash"); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.CompleteMessageSubmission(ctx, session.ID, "steer-id", 503, []byte(`{"error":"delivery uncertain"}`)); err != nil {
+				t.Fatal(err)
+			}
+			appendEvent := func(kind, payload string) {
+				t.Helper()
+				if _, err := db.AppendEvent(ctx, AppendEventParams{SessionID: session.ID, Type: kind, Role: "system", Status: EventStatusCompleted, Payload: json.RawMessage(payload)}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			appendEvent("user.message.steer.submitted", `{"run_id":"run1","client_submission_id":"steer-id"}`)
+			record, err := db.GetMessageSubmission(ctx, session.ID, "steer-id")
+			if err != nil || record.State != "unknown" || record.TargetRunID != "run1" || record.RunEnded {
+				t.Fatalf("active target: %#v %v", record, err)
+			}
+			appendEvent(terminal, `{"run_id":"run1","status":"idle"}`)
+			// A currently running successor must not hide the ended original target.
+			appendEvent("agent.run.started", `{"run_id":"run2"}`)
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			db, err = Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, claimed, err := db.ClaimMessageSubmission(ctx, session.ID, "steer-id", "hash")
+			if err != nil || claimed || record.State != "unknown" || !record.RunEnded || record.TargetRunID != "run1" {
+				t.Fatalf("ended target must stay reserved and uncertain: %#v claimed=%v %v", record, claimed, err)
+			}
+			// Delayed durable acceptance always wins over the uncertain receipt.
+			appendEvent("user.message.completed", `{"run_id":"run1","client_submission_id":"steer-id","delivery":"steer"}`)
+			record, err = db.GetMessageSubmission(ctx, session.ID, "steer-id")
+			if err != nil || record.State != "accepted" || record.HTTPStatus != 202 {
+				t.Fatalf("late acceptance: %#v %v", record, err)
+			}
+		})
+	}
+}

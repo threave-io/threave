@@ -32,6 +32,7 @@ import {
 import { cn } from '@/lib/utils'
 import { getMessageSubmissionStatus } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { pendingSubmissionsChanged, readPendingSubmissions, removePendingSubmission, savePendingSubmission, type PendingSubmission, type SubmissionStatus } from '@/lib/pending-submissions'
 
 type Props = {
@@ -122,9 +123,6 @@ export function SessionDetail({
   const handleFollowUp = useCallback((prompt: string) => {
     if (followUpSessionID) setPromptInsertion({ sessionID: followUpSessionID, prompt })
   }, [followUpSessionID])
-  const handlePromptInserted = useCallback((insertion: PromptInsertion) => {
-    setPromptInsertion((current) => current === insertion ? null : current)
-  }, [])
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatTranscriptMessage[]>([])
   const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([])
   const [pendingLoaded, setPendingLoaded] = useState(false)
@@ -132,6 +130,22 @@ export function SessionDetail({
   const [checkingSubmission, setCheckingSubmission] = useState(false)
   const [sendingSubmissionID, setSendingSubmissionID] = useState<string | null>(null)
   const [submissionStates, setSubmissionStates] = useState<Record<string, SubmissionStatus['state']>>({})
+  const [endedSubmissionRuns, setEndedSubmissionRuns] = useState<Record<string, boolean>>({})
+  const [dismissSubmission, setDismissSubmission] = useState<PendingSubmission | null>(null)
+  const handlePromptInserted = useCallback((insertion: PromptInsertion, error?: string) => {
+    setPromptInsertion((current) => current === insertion ? null : current)
+    if (insertion.recovery) {
+      if (error) {
+        setPendingError(error)
+        setCheckingSubmission(false)
+      } else {
+        void removePendingSubmission(insertion.recovery.submissionID)
+          .then(() => setPendingError(''))
+          .catch(() => setPendingError('The draft was restored, but the pending record could not be cleared.'))
+          .finally(() => setCheckingSubmission(false))
+      }
+    }
+  }, [])
   const submitInFlightRef = useRef(false)
   const statusEvents = useMemo(() => offline ? [] : (liveEvents ?? events), [events, liveEvents, offline])
   const persistedClientSubmissionIDs = useMemo(() => clientSubmissionIDs(events), [events])
@@ -183,6 +197,8 @@ export function SessionDetail({
     setPendingSubmissions([])
     setPendingError('')
     setSubmissionStates({})
+    setEndedSubmissionRuns({})
+    setDismissSubmission(null)
     const sessionID = session?.id
     if (!sessionID) return
     async function refresh() {
@@ -218,11 +234,14 @@ export function SessionDetail({
       void getMessageSubmissionStatus(pending.sessionID, pending.id).then(async (status) => {
         if (closed) return
         if (status.state === 'accepted') await removePendingSubmission(pending.id)
-        else setSubmissionStates((current) => ({ ...current, [pending.id]: status.state }))
+        else {
+          setSubmissionStates((current) => ({ ...current, [pending.id]: status.state }))
+          setEndedSubmissionRuns((current) => ({ ...current, [pending.id]: Boolean(status.run_ended) }))
+        }
       }).catch(() => { /* Keep the durable record and explicit Check delivery action. */ })
     }
     return () => { closed = true }
-  }, [offline, pendingSubmissions, checkingSubmission])
+  }, [offline, pendingSubmissions, checkingSubmission, session?.status, steeringRunID, latestTerminal?.seq, sendingSubmissionID])
 
   useEffect(() => {
     setOptimisticUserMessages([])
@@ -319,6 +338,7 @@ export function SessionDetail({
     try {
       const status = await getMessageSubmissionStatus(pending.sessionID, pending.id)
       setSubmissionStates((current) => ({ ...current, [pending.id]: status.state }))
+      setEndedSubmissionRuns((current) => ({ ...current, [pending.id]: Boolean(status.run_ended) }))
       if (status.state === 'accepted') {
         await removePendingSubmission(pending.id)
       } else if (status.state === 'not_received' && retry) {
@@ -496,6 +516,7 @@ export function SessionDetail({
                 <div key={pending.id} className="mt-2">
                   <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words">{pending.content}</pre>
                   {submissionStates[pending.id] === 'not_received' ? <p className="mt-1 text-muted-foreground">The server has not received this message. You can retry it or dismiss it to send another message.</p> : null}
+                  {endedSubmissionRuns[pending.id] && submissionStates[pending.id] === 'unknown' ? <p className="mt-1 text-muted-foreground">The target run has ended. Delivery is still uncertain; you can dismiss this record and restore its text as a draft. Sending it again may duplicate work.</p> : null}
                   {pending.attachments.length > 0 ? <p>{pending.attachments.length} image attachment(s) preserved</p> : null}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" disabled={offline || checkingSubmission} onClick={() => void checkSubmission(pending)}>Check delivery</Button>
@@ -503,11 +524,29 @@ export function SessionDetail({
                     {['rejected', 'not_received'].includes(submissionStates[pending.id]) ? <Button size="sm" variant="outline" disabled={checkingSubmission} onClick={() => {
                       void removePendingSubmission(pending.id).then(() => setPendingError('')).catch(() => setPendingError('Unable to clear the pending record.'))
                     }}>{submissionStates[pending.id] === 'rejected' ? 'Dismiss rejected message' : 'Dismiss unsent message'}</Button> : null}
+                    {(submissionStates[pending.id] ?? 'unknown') === 'unknown' ? <Button size="sm" variant="outline" disabled={checkingSubmission} onClick={() => setDismissSubmission(pending)}>Dismiss uncertain message</Button> : null}
                   </div>
                 </div>
               ))}
             </section>
           ) : null}
+          <Dialog open={Boolean(dismissSubmission)} onOpenChange={(open) => { if (!open) setDismissSubmission(null) }}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Dismiss uncertain message?</DialogTitle>
+                <DialogDescription>The provider may already have received this message. Sending it again could duplicate work. Dismissing restores its text to your draft and removes the local sending block. Nothing will be sent automatically.</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="outline" onClick={() => setDismissSubmission(null)}>Cancel</Button>
+                <Button onClick={() => {
+                  if (!dismissSubmission) return
+                  setCheckingSubmission(true)
+                  setPromptInsertion({ sessionID: dismissSubmission.sessionID, prompt: dismissSubmission.content, recovery: { submissionID: dismissSubmission.id, skills: dismissSubmission.skills, attachments: dismissSubmission.attachments } })
+                  setDismissSubmission(null)
+                }}>Dismiss and restore draft</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
           <PromptComposer
             key={session.id}
             sessionID={session.id}

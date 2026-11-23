@@ -13,6 +13,8 @@ export type PendingSubmission = {
 }
 export type SubmissionStatus = {
   state: 'not_received' | 'unknown' | 'accepted' | 'rejected'
+  target_run_id?: string
+  run_ended?: boolean
   response?: SubmitMessageResponse
 }
 export const pendingSubmissionsChanged = 'gorchestra:pending-submissions-changed'
